@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Music,
   Heart,
@@ -49,10 +49,30 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [showLyrics, setShowLyrics] = useState(false);
-  const [lyrics, setLyrics] = useState('');
+  const [syncedLyrics, setSyncedLyrics] = useState<{time: number, text: string}[] | null>(null);
+  const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
   const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
-  const [rightPanelView, setRightPanelView] = useState<'search' | 'playlist' | 'queue'>('search');
+  const [rightPanelView, setRightPanelView] = useState<'search' | 'playlist' | 'queue' | 'lyrics'>('search');
+
+  const activeLyricIndex = useMemo(() => {
+    if (!syncedLyrics) return -1;
+    for (let i = syncedLyrics.length - 1; i >= 0; i--) {
+      if (progress >= syncedLyrics[i].time) {
+        return i;
+      }
+    }
+    return -1;
+  }, [progress, syncedLyrics]);
+
+  useEffect(() => {
+    if (rightPanelView === 'lyrics' && activeLyricIndex !== -1) {
+      const el = document.getElementById(`lyric-${activeLyricIndex}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [activeLyricIndex, rightPanelView]);
+
   const [isLooping, setIsLooping] = useState(false);
   const [showFriendsMenu, setShowFriendsMenu] = useState(false);
   const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
@@ -408,21 +428,45 @@ export default function App() {
     }
   };
 
+  const parseLrc = (lrc: string) => {
+    const lines = lrc.split('\n');
+    const parsed: { time: number, text: string }[] = [];
+    const timeReg = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
+    lines.forEach(line => {
+      const match = timeReg.exec(line);
+      if (match) {
+        const min = parseInt(match[1]);
+        const sec = parseInt(match[2]);
+        const ms = parseInt(match[3]);
+        const time = min * 60 + sec + ms / (match[3].length === 2 ? 100 : 1000);
+        const text = line.replace(timeReg, '').trim();
+        if (text) parsed.push({ time, text });
+      }
+    });
+    return parsed;
+  };
+
   const fetchLyrics = async (artist: string, title: string) => {
     setIsLoadingLyrics(true);
-    setLyrics('');
+    setSyncedLyrics(null);
+    setPlainLyrics(null);
     try {
-      // Clean up title for better matching (remove "feat.", "(Remix)", etc.)
       const cleanTitle = title.split('(')[0].split('feat.')[0].trim();
-      const res = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(cleanTitle)}`);
+      const res = await fetch(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(cleanTitle)}`);
       if (res.ok) {
         const data = await res.json();
-        setLyrics(data.lyrics || "Lyrics not found.");
+        if (data.syncedLyrics) {
+          setSyncedLyrics(parseLrc(data.syncedLyrics));
+        } else if (data.plainLyrics) {
+          setPlainLyrics(data.plainLyrics);
+        } else {
+          setPlainLyrics("Lyrics not found for this track.");
+        }
       } else {
-        setLyrics("Lyrics not found for this track.");
+        setPlainLyrics("Lyrics not found for this track.");
       }
     } catch (error) {
-      setLyrics("Could not load lyrics.");
+      setPlainLyrics("Could not load lyrics.");
     } finally {
       setIsLoadingLyrics(false);
     }
@@ -442,29 +486,6 @@ export default function App() {
         {/* Left Panel - Player */}
         <div className="w-full md:w-[400px] bg-[#22272e] rounded-2xl p-6 flex flex-col shadow-2xl relative overflow-hidden">
           
-          {/* Lyrics Overlay */}
-          {showLyrics && (
-            <div className="absolute inset-0 bg-[#22272e]/95 backdrop-blur-md z-10 flex flex-col p-6 overflow-hidden">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold text-white">Lyrics</h3>
-                <button onClick={() => setShowLyrics(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors outline-none">
-                  <X size={24} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto pr-4 custom-scrollbar">
-                {isLoadingLyrics ? (
-                  <div className="flex items-center justify-center h-full">
-                    <Loader2 className="animate-spin text-gray-400" size={32} />
-                  </div>
-                ) : (
-                  <pre className="whitespace-pre-wrap font-sans text-lg leading-relaxed text-gray-300">
-                    {lyrics || "No lyrics available."}
-                  </pre>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Album Art */}
           <div className="w-full aspect-square bg-[#2d333b] rounded-xl flex items-center justify-center mb-6 overflow-hidden shadow-inner">
             {currentSong ? (
@@ -547,8 +568,8 @@ export default function App() {
             </div>
 
             <button 
-              onClick={() => setShowLyrics(true)}
-              className={`absolute right-0 p-2 outline-none transition-colors ${showLyrics ? 'text-white' : 'text-[#8b949e] hover:text-white'}`}
+              onClick={() => setRightPanelView(prev => prev === 'lyrics' ? 'search' : 'lyrics')}
+              className={`absolute right-0 p-2 outline-none transition-colors ${rightPanelView === 'lyrics' ? 'text-white' : 'text-[#8b949e] hover:text-white'}`}
             >
               <MessageSquareQuote size={20} />
             </button>
@@ -814,6 +835,54 @@ export default function App() {
               </div>
               <div className="flex-1 flex items-center justify-center text-[#8b949e]">
                 <p>No songs are playing.</p>
+              </div>
+            </>
+          )}
+
+          {rightPanelView === 'lyrics' && (
+            <>
+              <div className="p-4 flex items-center justify-between text-[#8b949e]">
+                <button onClick={() => setRightPanelView('search')} className="flex items-center gap-2 hover:text-white transition-colors outline-none">
+                  <ArrowLeft size={20} />
+                  <span>Back to search</span>
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-medium">Lyrics</span>
+                  <MessageSquareQuote size={16} />
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                {isLoadingLyrics ? (
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 className="animate-spin text-gray-400" size={32} />
+                  </div>
+                ) : syncedLyrics ? (
+                  <div className="flex flex-col gap-4 pb-[50vh]">
+                    {syncedLyrics.map((lyric, index) => {
+                      const isActive = index === activeLyricIndex;
+                      const isPassed = index < activeLyricIndex;
+                      return (
+                        <p
+                          key={index}
+                          id={`lyric-${index}`}
+                          className={`text-2xl md:text-3xl font-bold transition-all duration-300 cursor-pointer
+                            ${isActive ? 'text-white scale-105 origin-left' : isPassed ? 'text-white/50' : 'text-[#8b949e]/40 hover:text-white/60'}`}
+                          onClick={() => {
+                            if (audioRef.current) {
+                              audioRef.current.currentTime = lyric.time;
+                            }
+                          }}
+                        >
+                          {lyric.text}
+                        </p>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <pre className="whitespace-pre-wrap font-sans text-lg leading-relaxed text-gray-300">
+                    {plainLyrics || "No lyrics available."}
+                  </pre>
+                )}
               </div>
             </>
           )}
