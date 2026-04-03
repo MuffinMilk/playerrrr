@@ -11,7 +11,6 @@ import {
   Search,
   ListMusic,
   Copy,
-  Cloud,
   Loader2,
   X,
   ArrowLeft,
@@ -583,9 +582,6 @@ export default function App() {
                     </button>
                     <button onClick={() => setRightPanelView('queue')} className="hover:text-white transition-colors outline-none" title="Queue">
                       <Copy size={20} />
-                    </button>
-                    <button className="hover:text-white transition-colors outline-none" title="Switch Service">
-                      <Cloud size={20} />
                     </button>
                   </div>
                 </div>
