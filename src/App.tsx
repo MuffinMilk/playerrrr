@@ -76,6 +76,7 @@ export default function App() {
   const [isLooping, setIsLooping] = useState(false);
   const [showFriendsMenu, setShowFriendsMenu] = useState(false);
   const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<{ photoURL?: string, displayName?: string } | null>(null);
   
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [activePlaylist, setActivePlaylist] = useState<Playlist | null>(null);
@@ -126,10 +127,25 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    let unsubscribeProfile: (() => void) | null = null;
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUserUid(user ? user.uid : null);
+      if (unsubscribeProfile) unsubscribeProfile();
+      
+      if (user) {
+        unsubscribeProfile = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
+          if (docSnap.exists()) {
+            setUserProfile(docSnap.data());
+          }
+        });
+      } else {
+        setUserProfile(null);
+      }
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
   }, []);
 
   useEffect(() => {
@@ -487,11 +503,31 @@ export default function App() {
         <div className="w-full md:w-[400px] bg-[#22272e] rounded-2xl p-6 flex flex-col shadow-2xl relative overflow-hidden">
           
           {/* Album Art */}
-          <div className="w-full aspect-square bg-[#2d333b] rounded-xl flex items-center justify-center mb-6 overflow-hidden shadow-inner">
+          <div className="w-full aspect-square bg-[#2d333b] rounded-xl flex items-center justify-center mb-6 overflow-hidden shadow-inner relative group">
             {currentSong ? (
               <img src={currentSong.coverUrl} alt="Album Art" className="w-full h-full object-cover" />
             ) : (
               <Music size={120} className="text-[#444c56]" />
+            )}
+            
+            {/* User Profile Overlay (Top Left) */}
+            {userProfile && (
+              <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/40 backdrop-blur-md p-1.5 pr-3 rounded-full border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {userProfile.photoURL ? (
+                  <img 
+                    key={userProfile.photoURL}
+                    src={userProfile.photoURL} 
+                    alt="Me" 
+                    className="w-8 h-8 rounded-full object-cover border border-white/20" 
+                    referrerPolicy="no-referrer" 
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-[#444c56] rounded-full flex items-center justify-center border border-white/20">
+                    <Users size={14} className="text-white" />
+                  </div>
+                )}
+                <span className="text-xs font-medium text-white truncate max-w-[80px]">{userProfile.displayName}</span>
+              </div>
             )}
           </div>
 

@@ -70,16 +70,28 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    let unsubscribeProfile: (() => void) | null = null;
+    let unsubscribeRequests: (() => void) | null = null;
+    let unsubF1: (() => void) | null = null;
+    let unsubF2: (() => void) | null = null;
+    let unsubFriends: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      
+      // Cleanup previous listeners
+      if (unsubscribeProfile) unsubscribeProfile();
+      if (unsubscribeRequests) unsubscribeRequests();
+      if (unsubF1) unsubF1();
+      if (unsubF2) unsubF2();
+      if (unsubFriends) unsubFriends();
+
       if (currentUser) {
-        // Check if user profile exists, if not create one
         const userRef = doc(db, 'users', currentUser.uid);
-        const unsubscribeProfile = onSnapshot(userRef, (docSnap) => {
+        unsubscribeProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
             setProfile(docSnap.data() as UserProfile);
           } else {
-            // Create new profile
             const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
             const newProfile = {
               uid: currentUser.uid,
@@ -91,20 +103,16 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           }
         }, (error) => handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`));
 
-        // Listen for incoming friend requests
         const qRequests = query(collection(db, 'friendRequests'), where('toUid', '==', currentUser.uid));
-        const unsubscribeRequests = onSnapshot(qRequests, (snapshot) => {
+        unsubscribeRequests = onSnapshot(qRequests, (snapshot) => {
           const reqs: FriendRequest[] = [];
           snapshot.forEach(doc => reqs.push({ id: doc.id, ...doc.data() } as FriendRequest));
           setRequests(reqs);
         }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendRequests'));
 
-        // Listen for friendships
         const qFriendships1 = query(collection(db, 'friendships'), where('user1', '==', currentUser.uid));
         const qFriendships2 = query(collection(db, 'friendships'), where('user2', '==', currentUser.uid));
         
-        let unsubFriends: (() => void) | null = null;
-
         const handleFriendships = async (snapshot1: any, snapshot2: any) => {
           const friendUids = new Set<string>();
           snapshot1?.forEach((doc: any) => friendUids.add(doc.data().user2));
@@ -128,17 +136,10 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
         };
 
         let snap1: any, snap2: any;
-        const unsubF1 = onSnapshot(qFriendships1, (s) => { snap1 = s; handleFriendships(snap1, snap2); }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendships'));
-        const unsubF2 = onSnapshot(qFriendships2, (s) => { snap2 = s; handleFriendships(snap1, snap2); }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendships'));
+        unsubF1 = onSnapshot(qFriendships1, (s) => { snap1 = s; handleFriendships(snap1, snap2); }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendships'));
+        unsubF2 = onSnapshot(qFriendships2, (s) => { snap2 = s; handleFriendships(snap1, snap2); }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendships'));
 
         setLoading(false);
-        return () => {
-          unsubscribeProfile();
-          unsubscribeRequests();
-          unsubF1();
-          unsubF2();
-          if (unsubFriends) unsubFriends();
-        };
       } else {
         setProfile(null);
         setRequests([]);
@@ -147,7 +148,14 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+      if (unsubscribeRequests) unsubscribeRequests();
+      if (unsubF1) unsubF1();
+      if (unsubF2) unsubF2();
+      if (unsubFriends) unsubFriends();
+    };
   }, []);
 
   useEffect(() => {
@@ -335,21 +343,22 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
 
   const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !user) return;
+    const currentUser = auth.currentUser;
+    if (!file || !currentUser) return;
 
     setUploading(true);
     setError('');
     
     try {
-      const storageRef = ref(storage, `profile_pics/${user.uid}`);
+      const storageRef = ref(storage, `profile_pics/${currentUser.uid}`);
       await uploadBytes(storageRef, file);
       const downloadURL = await getDownloadURL(storageRef);
       
       // Update Auth profile
-      await updateProfile(user, { photoURL: downloadURL });
+      await updateProfile(currentUser, { photoURL: downloadURL });
       
       // Update Firestore profile
-      const userRef = doc(db, 'users', user.uid);
+      const userRef = doc(db, 'users', currentUser.uid);
       await setDoc(userRef, { photoURL: downloadURL }, { merge: true });
       
       setSuccess('Profile picture updated!');
@@ -525,7 +534,13 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
               <div className="flex items-center gap-3">
                 <div className="relative group cursor-pointer">
                   {profile?.photoURL ? (
-                    <img src={profile.photoURL} alt="Profile" className="w-12 h-12 rounded-full object-cover border-2 border-transparent group-hover:border-white/20 transition-all" referrerPolicy="no-referrer" />
+                    <img 
+                      key={profile.photoURL}
+                      src={profile.photoURL} 
+                      alt="Profile" 
+                      className="w-12 h-12 rounded-full object-cover border-2 border-transparent group-hover:border-white/20 transition-all" 
+                      referrerPolicy="no-referrer" 
+                    />
                   ) : (
                     <div className="w-12 h-12 bg-[#444c56] rounded-full flex items-center justify-center border-2 border-transparent group-hover:border-white/20 transition-all">
                       <Users size={24} />
