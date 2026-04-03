@@ -62,6 +62,21 @@ service cloud.firestore {
              data.senderId == request.auth.uid &&
              data.createdAt is number;
     }
+    function isValidGroup() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['name', 'ownerId', 'members', 'createdAt']) &&
+             data.ownerId == request.auth.uid &&
+             data.members is list && data.members.size() >= 2 &&
+             data.members.size() <= 20 &&
+             data.createdAt is number;
+    }
+    function isValidGroupMessage() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['groupId', 'senderId', 'senderName', 'senderPhoto', 'text', 'createdAt']) &&
+             data.senderId == request.auth.uid &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+             data.createdAt is number;
+    }
 
     match /users/{userId} {
       allow read: if isAuthenticated();
@@ -103,6 +118,18 @@ service cloud.firestore {
         allow read: if isAuthenticated() && (get(/databases/$(database)/documents/calls/$(callId)).data.callerId == request.auth.uid || get(/databases/$(database)/documents/calls/$(callId)).data.receiverId == request.auth.uid);
         allow create: if isAuthenticated() && isValidCandidate();
       }
+    }
+
+    match /groups/{groupId} {
+      allow read: if isAuthenticated() && request.auth.uid in resource.data.members;
+      allow create: if isAuthenticated() && isValidGroup();
+      allow update: if isAuthenticated() && request.auth.uid in resource.data.members && isValidGroup();
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /groupMessages/{messageId} {
+      allow read: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members;
+      allow create: if isAuthenticated() && isValidGroupMessage() && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
     }
   }
 }

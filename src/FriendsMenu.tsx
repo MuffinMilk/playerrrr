@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft, Camera, Phone, Video, PhoneOff, Mic, MicOff, VideoOff } from 'lucide-react';
+import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft, Camera, Phone, Video, PhoneOff, Mic, MicOff, VideoOff, Plus } from 'lucide-react';
 import { auth, db, storage } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc, updateDoc } from 'firebase/firestore';
@@ -63,12 +63,31 @@ interface CallCandidate {
   createdAt: number;
 }
 
+interface Group {
+  id: string;
+  name: string;
+  ownerId: string;
+  members: string[];
+  createdAt: number;
+}
+
+interface GroupMessage {
+  id: string;
+  groupId: string;
+  senderId: string;
+  senderName: string;
+  senderPhoto: string;
+  text: string;
+  createdAt: number;
+}
+
 export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [friends, setFriends] = useState<UserProfile[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -76,10 +95,16 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   
   // Chat states
   const [activeChat, setActiveChat] = useState<UserProfile | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [activeGroup, setActiveGroup] = useState<Group | null>(null);
+  const [messages, setMessages] = useState<(Message | GroupMessage)[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const typingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Group creation states
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
 
   // Call states
   const [activeCall, setActiveCall] = useState<Call | null>(null);
@@ -103,6 +128,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     let unsubF1: (() => void) | null = null;
     let unsubF2: (() => void) | null = null;
     let unsubFriends: (() => void) | null = null;
+    let unsubGroups: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -113,6 +139,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       if (unsubF1) unsubF1();
       if (unsubF2) unsubF2();
       if (unsubFriends) unsubFriends();
+      if (unsubGroups) unsubGroups();
 
       if (currentUser) {
         const userRef = doc(db, 'users', currentUser.uid);
@@ -137,6 +164,13 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           snapshot.forEach(doc => reqs.push({ id: doc.id, ...doc.data() } as FriendRequest));
           setRequests(reqs);
         }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendRequests'));
+
+        const qGroups = query(collection(db, 'groups'), where('members', 'array-contains', currentUser.uid));
+        unsubGroups = onSnapshot(qGroups, (snapshot) => {
+          const gList: Group[] = [];
+          snapshot.forEach(doc => gList.push({ id: doc.id, ...doc.data() } as Group));
+          setGroups(gList);
+        }, (error) => handleFirestoreError(error, OperationType.LIST, 'groups'));
 
         const qFriendships1 = query(collection(db, 'friendships'), where('user1', '==', currentUser.uid));
         const qFriendships2 = query(collection(db, 'friendships'), where('user2', '==', currentUser.uid));
@@ -187,48 +221,67 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
-    if (!user || !activeChat) {
+    if (!user) {
       setMessages([]);
       return;
     }
 
-    const q1 = query(
-      collection(db, 'messages'),
-      where('senderId', '==', user.uid),
-      where('receiverId', '==', activeChat.uid)
-    );
-    const q2 = query(
-      collection(db, 'messages'),
-      where('senderId', '==', activeChat.uid),
-      where('receiverId', '==', user.uid)
-    );
+    if (activeChat) {
+      const q1 = query(
+        collection(db, 'messages'),
+        where('senderId', '==', user.uid),
+        where('receiverId', '==', activeChat.uid)
+      );
+      const q2 = query(
+        collection(db, 'messages'),
+        where('senderId', '==', activeChat.uid),
+        where('receiverId', '==', user.uid)
+      );
 
-    let msgs1: Message[] = [];
-    let msgs2: Message[] = [];
+      let msgs1: Message[] = [];
+      let msgs2: Message[] = [];
 
-    const updateMessages = () => {
-      const allMsgs = [...msgs1, ...msgs2].sort((a, b) => a.createdAt - b.createdAt);
-      setMessages(allMsgs);
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
-    };
+      const updateMessages = () => {
+        const allMsgs = [...msgs1, ...msgs2].sort((a, b) => a.createdAt - b.createdAt);
+        setMessages(allMsgs);
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      };
 
-    const unsub1 = onSnapshot(q1, (snap) => {
-      msgs1 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-      updateMessages();
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
+      const unsub1 = onSnapshot(q1, (snap) => {
+        msgs1 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        updateMessages();
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
 
-    const unsub2 = onSnapshot(q2, (snap) => {
-      msgs2 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-      updateMessages();
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
+      const unsub2 = onSnapshot(q2, (snap) => {
+        msgs2 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        updateMessages();
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
 
-    return () => {
-      unsub1();
-      unsub2();
-    };
-  }, [user, activeChat]);
+      return () => {
+        unsub1();
+        unsub2();
+      };
+    } else if (activeGroup) {
+      const q = query(
+        collection(db, 'groupMessages'),
+        where('groupId', '==', activeGroup.id)
+      );
+
+      const unsub = onSnapshot(q, (snapshot) => {
+        const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as GroupMessage));
+        setMessages(msgs.sort((a, b) => a.createdAt - b.createdAt));
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'groupMessages'));
+
+      return () => unsub();
+    } else {
+      setMessages([]);
+    }
+  }, [user, activeChat, activeGroup]);
 
   // Listen for incoming calls
   useEffect(() => {
@@ -487,21 +540,63 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !user || !activeChat) return;
+    if (!newMessage.trim() || !user || (!activeChat && !activeGroup)) return;
 
     try {
-      await addDoc(collection(db, 'messages'), {
-        senderId: user.uid,
-        receiverId: activeChat.uid,
-        text: newMessage.trim(),
-        createdAt: Date.now()
-      });
+      if (activeChat) {
+        await addDoc(collection(db, 'messages'), {
+          senderId: user.uid,
+          receiverId: activeChat.uid,
+          text: newMessage.trim(),
+          createdAt: Date.now()
+        });
+      } else if (activeGroup) {
+        await addDoc(collection(db, 'groupMessages'), {
+          groupId: activeGroup.id,
+          senderId: user.uid,
+          senderName: profile?.displayName || 'Anonymous',
+          senderPhoto: profile?.photoURL || '',
+          text: newMessage.trim(),
+          createdAt: Date.now()
+        });
+      }
       setNewMessage('');
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
+      if (activeChat) {
+        setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
+      }
     } catch (err) {
       console.error('Failed to send message', err);
     }
+  };
+
+  const createGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !groupName.trim() || selectedFriends.length < 1) return;
+
+    try {
+      const groupRef = await addDoc(collection(db, 'groups'), {
+        name: groupName.trim(),
+        ownerId: user.uid,
+        members: [user.uid, ...selectedFriends],
+        createdAt: Date.now()
+      });
+      
+      setGroupName('');
+      setSelectedFriends([]);
+      setIsCreatingGroup(false);
+      setSuccess('Group created!');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Failed to create group', err);
+      setError('Failed to create group.');
+    }
+  };
+
+  const toggleFriendSelection = (uid: string) => {
+    setSelectedFriends(prev => 
+      prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]
+    );
   };
 
   const setupPeerConnection = (callId: string) => {
@@ -806,25 +901,86 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* Add Friend */}
-            <div className="bg-[#2d333b] p-4 rounded-xl">
-              <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Add Friend</h4>
-              <form onSubmit={sendFriendRequest} className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Enter Friend Code"
-                  value={friendCodeInput}
-                  onChange={(e) => setFriendCodeInput(e.target.value)}
-                  className="flex-1 bg-[#1c2128] text-white px-4 py-2 rounded-lg outline-none focus:ring-2 focus:ring-white/20 font-mono uppercase"
-                  maxLength={8}
-                />
-                <button type="submit" className="bg-white text-black px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors flex items-center gap-2">
-                  <UserPlus size={18} /> Add
+            {/* Add Friend & Create Group */}
+            <div className="flex gap-4">
+              <div className="bg-[#2d333b] p-4 rounded-xl flex-1">
+                <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Add Friend</h4>
+                <form onSubmit={sendFriendRequest} className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Enter Friend Code"
+                    value={friendCodeInput}
+                    onChange={(e) => setFriendCodeInput(e.target.value)}
+                    className="flex-1 bg-[#1c2128] text-white px-4 py-2 rounded-lg outline-none focus:ring-2 focus:ring-white/20 font-mono uppercase"
+                    maxLength={8}
+                  />
+                  <button type="submit" className="bg-white text-black px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors flex items-center gap-2">
+                    <UserPlus size={18} /> Add
+                  </button>
+                </form>
+              </div>
+              <div className="bg-[#2d333b] p-4 rounded-xl flex items-center justify-center">
+                <button 
+                  onClick={() => setIsCreatingGroup(true)}
+                  className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center hover:bg-blue-700 transition-colors shadow-lg"
+                  title="Create Group Chat"
+                >
+                  <Plus size={24} />
                 </button>
-              </form>
-              {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
-              {success && <p className="text-green-400 text-sm mt-2">{success}</p>}
+              </div>
             </div>
+
+            {isCreatingGroup && (
+              <div className="bg-[#2d333b] p-4 rounded-xl border border-blue-500/30">
+                <div className="flex justify-between items-center mb-4">
+                  <h4 className="text-sm font-medium text-white uppercase tracking-wider">Create Group Chat</h4>
+                  <button onClick={() => setIsCreatingGroup(false)} className="text-gray-400 hover:text-white">
+                    <X size={18} />
+                  </button>
+                </div>
+                <form onSubmit={createGroup} className="flex flex-col gap-4">
+                  <input
+                    type="text"
+                    placeholder="Group Name"
+                    value={groupName}
+                    onChange={(e) => setGroupName(e.target.value)}
+                    className="bg-[#1c2128] text-white px-4 py-2 rounded-lg outline-none focus:ring-2 focus:ring-white/20"
+                    required
+                  />
+                  <div className="max-h-40 overflow-y-auto custom-scrollbar flex flex-col gap-2">
+                    <p className="text-xs text-gray-400 mb-1">Select Friends:</p>
+                    {friends.map(friend => (
+                      <div 
+                        key={friend.uid}
+                        onClick={() => toggleFriendSelection(friend.uid)}
+                        className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${selectedFriends.includes(friend.uid) ? 'bg-blue-600/20 border border-blue-500/50' : 'bg-[#1c2128] border border-transparent hover:border-white/10'}`}
+                      >
+                        {friend.photoURL ? (
+                          <img src={friend.photoURL} alt="" className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="w-6 h-6 bg-[#444c56] rounded-full flex items-center justify-center">
+                            <Users size={12} />
+                          </div>
+                        )}
+                        <span className="text-sm text-white flex-1">{friend.displayName}</span>
+                        {selectedFriends.includes(friend.uid) && <Check size={14} className="text-blue-400" />}
+                      </div>
+                    ))}
+                  </div>
+                  <button 
+                    type="submit" 
+                    disabled={!groupName.trim() || selectedFriends.length < 1}
+                    className="bg-white text-black px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
+                  >
+                    Create Group
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            {success && <p className="text-green-400 text-sm">{success}</p>}
+
 
             {/* Friend Requests */}
             {requests.length > 0 && (
@@ -855,51 +1011,75 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            {/* Friends List */}
+            {/* Friends & Groups List */}
             <div className="bg-[#2d333b] p-4 rounded-xl flex-1 flex flex-col min-h-0">
-              {activeChat ? (
+              {(activeChat || activeGroup) ? (
                 <div className="flex flex-col h-full">
                   <div className="flex items-center justify-between mb-4 pb-4 border-b border-[#444c56]">
                     <div className="flex items-center gap-3">
-                      <button onClick={() => setActiveChat(null)} className="p-1 hover:bg-[#444c56] rounded-md transition-colors text-gray-400 hover:text-white">
+                      <button onClick={() => { setActiveChat(null); setActiveGroup(null); }} className="p-1 hover:bg-[#444c56] rounded-md transition-colors text-gray-400 hover:text-white">
                         <ArrowLeft size={20} />
                       </button>
-                      {activeChat.photoURL ? (
-                        <img src={activeChat.photoURL} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                      {activeChat ? (
+                        <>
+                          {activeChat.photoURL ? (
+                            <img src={activeChat.photoURL} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-8 h-8 bg-[#444c56] rounded-full flex items-center justify-center">
+                              <Users size={14} />
+                            </div>
+                          )}
+                          <span className="text-white font-medium">{activeChat.displayName}</span>
+                        </>
                       ) : (
-                        <div className="w-8 h-8 bg-[#444c56] rounded-full flex items-center justify-center">
-                          <Users size={14} />
-                        </div>
+                        <>
+                          <div className="w-8 h-8 bg-blue-600/20 rounded-full flex items-center justify-center text-blue-400">
+                            <Users size={14} />
+                          </div>
+                          <span className="text-white font-medium">{activeGroup?.name}</span>
+                        </>
                       )}
-                      <span className="text-white font-medium">{activeChat.displayName}</span>
                     </div>
                     
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => startCall('voice')}
-                        className="p-2 hover:bg-[#444c56] rounded-full transition-colors text-gray-400 hover:text-green-400"
-                        title="Voice Call"
-                      >
-                        <Phone size={20} />
-                      </button>
-                      <button 
-                        onClick={() => startCall('video')}
-                        className="p-2 hover:bg-[#444c56] rounded-full transition-colors text-gray-400 hover:text-blue-400"
-                        title="Video Call"
-                      >
-                        <Video size={20} />
-                      </button>
-                    </div>
+                    {activeChat && (
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => startCall('voice')}
+                          className="p-2 hover:bg-[#444c56] rounded-full transition-colors text-gray-400 hover:text-green-400"
+                          title="Voice Call"
+                        >
+                          <Phone size={20} />
+                        </button>
+                        <button 
+                          onClick={() => startCall('video')}
+                          className="p-2 hover:bg-[#444c56] rounded-full transition-colors text-gray-400 hover:text-blue-400"
+                          title="Video Call"
+                        >
+                          <Video size={20} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                   
                   <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 mb-4 pr-2">
                     {messages.length === 0 ? (
-                      <p className="text-gray-500 text-sm text-center my-auto">Say hi to {activeChat.displayName}!</p>
+                      <p className="text-gray-500 text-sm text-center my-auto">Say hi!</p>
                     ) : (
                       messages.map(msg => {
                         const isMe = msg.senderId === user.uid;
+                        const gMsg = msg as GroupMessage;
                         return (
-                          <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                          <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                            {!isMe && activeGroup && (
+                              <div className="flex items-center gap-1 mb-1 ml-1">
+                                {gMsg.senderPhoto ? (
+                                  <img src={gMsg.senderPhoto} alt="" className="w-4 h-4 rounded-full" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <div className="w-4 h-4 bg-[#444c56] rounded-full" />
+                                )}
+                                <span className="text-[10px] text-gray-500">{gMsg.senderName}</span>
+                              </div>
+                            )}
                             <div className={`max-w-[80%] rounded-2xl px-4 py-2 ${isMe ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-[#1c2128] text-gray-200 rounded-tl-sm'}`}>
                               <p className="text-sm break-words">{msg.text}</p>
                             </div>
@@ -907,7 +1087,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                         );
                       })
                     )}
-                    {activeChat.typingTo === user.uid && (
+                    {activeChat?.typingTo === user.uid && (
                       <div className="flex justify-start">
                         <div className="bg-[#1c2128] text-gray-400 rounded-2xl px-4 py-2 rounded-tl-sm text-sm italic">
                           typing...
@@ -921,7 +1101,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                     <input
                       type="text"
                       value={newMessage}
-                      onChange={handleTyping}
+                      onChange={activeChat ? handleTyping : (e) => setNewMessage(e.target.value)}
                       placeholder="Message..."
                       className="flex-1 bg-[#1c2128] text-white px-4 py-2 rounded-full outline-none focus:ring-2 focus:ring-white/20 text-sm"
                     />
@@ -936,46 +1116,77 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                 </div>
               ) : (
                 <>
-                  <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Your Friends</h4>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                    {friends.length === 0 ? (
-                      <p className="text-gray-500 text-sm text-center py-4">No friends yet. Add someone using their code!</p>
-                    ) : (
-                      <div className="flex flex-col gap-3">
-                        {friends.map(friend => (
-                          <div 
-                            key={friend.uid} 
-                            onClick={() => setActiveChat(friend)}
-                            className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg cursor-pointer hover:bg-[#30363d] transition-colors"
-                          >
-                            <div className="relative">
-                              {friend.photoURL ? (
-                                <img src={friend.photoURL} alt="" className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />
-                              ) : (
-                                <div className="w-10 h-10 bg-[#444c56] rounded-full flex items-center justify-center">
-                                  <Users size={16} />
-                                </div>
-                              )}
-                              {friend.currentSong && (
-                                <div className="absolute -bottom-1 -right-1 bg-green-500 w-3.5 h-3.5 rounded-full border-2 border-[#1c2128]" />
-                              )}
+                  <div className="flex flex-col gap-6 flex-1 min-h-0">
+                    {/* Groups Section */}
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Groups</h4>
+                      <div className="flex flex-col gap-2">
+                        {groups.length === 0 ? (
+                          <p className="text-gray-500 text-xs italic">No group chats yet.</p>
+                        ) : (
+                          groups.map(group => (
+                            <div 
+                              key={group.id}
+                              onClick={() => setActiveGroup(group)}
+                              className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg cursor-pointer hover:bg-[#30363d] transition-colors"
+                            >
+                              <div className="w-10 h-10 bg-blue-600/20 rounded-full flex items-center justify-center text-blue-400">
+                                <Users size={20} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-white font-medium truncate">{group.name}</p>
+                                <p className="text-xs text-gray-500">{group.members.length} members</p>
+                              </div>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-white font-medium truncate">{friend.displayName}</p>
-                              {friend.typingTo === user.uid ? (
-                                <p className="text-xs text-blue-400 italic truncate">Typing...</p>
-                              ) : friend.currentSong ? (
-                                <p className="text-xs text-green-400 truncate flex items-center gap-1">
-                                  <Music size={10} /> {friend.currentSong.title} - {friend.currentSong.artist}
-                                </p>
-                              ) : (
-                                <p className="text-xs text-gray-500">Offline</p>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                          ))
+                        )}
                       </div>
-                    )}
+                    </div>
+
+                    {/* Friends Section */}
+                    <div className="flex-1 flex flex-col min-h-0">
+                      <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Friends</h4>
+                      <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                        {friends.length === 0 ? (
+                          <p className="text-gray-500 text-sm text-center py-4">No friends yet. Add someone using their code!</p>
+                        ) : (
+                          <div className="flex flex-col gap-3">
+                            {friends.map(friend => (
+                              <div 
+                                key={friend.uid} 
+                                onClick={() => setActiveChat(friend)}
+                                className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg cursor-pointer hover:bg-[#30363d] transition-colors"
+                              >
+                                <div className="relative">
+                                  {friend.photoURL ? (
+                                    <img src={friend.photoURL} alt="" className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />
+                                  ) : (
+                                    <div className="w-10 h-10 bg-[#444c56] rounded-full flex items-center justify-center">
+                                      <Users size={16} />
+                                    </div>
+                                  )}
+                                  {friend.currentSong && (
+                                    <div className="absolute -bottom-1 -right-1 bg-green-500 w-3.5 h-3.5 rounded-full border-2 border-[#1c2128]" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-white font-medium truncate">{friend.displayName}</p>
+                                  {friend.typingTo === user.uid ? (
+                                    <p className="text-xs text-blue-400 italic truncate">Typing...</p>
+                                  ) : friend.currentSong ? (
+                                    <p className="text-xs text-green-400 truncate flex items-center gap-1">
+                                      <Music size={10} /> {friend.currentSong.title} - {friend.currentSong.artist}
+                                    </p>
+                                  ) : (
+                                    <p className="text-xs text-gray-500">Offline</p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </>
               )}

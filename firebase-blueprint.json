@@ -127,6 +127,38 @@
     "/calls/{callId}/candidates/{candidateId}": {
       "schema": { "$ref": "#/entities/CallCandidate" },
       "description": "ICE candidates for a call"
+    },
+    "/groups/{groupId}": {
+      "schema": {
+        "title": "Group",
+        "description": "A group chat",
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "ownerId": { "type": "string" },
+          "members": { "type": "array", "items": { "type": "string" } },
+          "createdAt": { "type": "number" }
+        },
+        "required": ["name", "ownerId", "members", "createdAt"]
+      },
+      "description": "Group chats"
+    },
+    "/groupMessages/{messageId}": {
+      "schema": {
+        "title": "GroupMessage",
+        "description": "A message in a group chat",
+        "type": "object",
+        "properties": {
+          "groupId": { "type": "string" },
+          "senderId": { "type": "string" },
+          "senderName": { "type": "string" },
+          "senderPhoto": { "type": "string" },
+          "text": { "type": "string" },
+          "createdAt": { "type": "number" }
+        },
+        "required": ["groupId", "senderId", "text", "createdAt"]
+      },
+      "description": "Messages in group chats"
     }
   }
 }
