@@ -270,14 +270,13 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       const convId = [user.uid, activeChat.uid].sort().join('_');
       const q = query(
         collection(db, 'messages'),
-        where('conversationId', '==', convId),
-        orderBy('createdAt', 'asc')
+        where('conversationId', '==', convId)
       );
 
       const unsub = onSnapshot(q, (snap) => {
         console.log('Messages snapshot received:', snap.size);
         const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-        setMessages(msgs);
+        setMessages(msgs.sort((a, b) => a.createdAt - b.createdAt));
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 100);
