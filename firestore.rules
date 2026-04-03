@@ -15,12 +15,17 @@ service cloud.firestore {
           (request.auth.token.email == "awdrej.puente@icloud.com" || request.auth.token.email == "awdrepuente408@gmail.com"));
     }
     function isBanned() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned == true;
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) == true;
     }
     function isTimedOut() {
       return isAuthenticated() && 
-             ('timeoutUntil' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.timeoutUntil > request.time.toMillis();
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('timeoutUntil', 0) > request.time.toMillis();
+    }
+    function canMessage() {
+      return isAuthenticated() && (isAdmin() || (!isBanned() && !isTimedOut()));
     }
     function hasOnlyAllowedFields(allowedFields) {
       return request.resource.data.keys().hasOnly(allowedFields);
@@ -85,7 +90,7 @@ service cloud.firestore {
     function isValidGroup() {
       let data = request.resource.data;
       return hasOnlyAllowedFields(['name', 'ownerId', 'members', 'createdAt']) &&
-             data.ownerId == request.auth.uid &&
+             (data.ownerId == request.auth.uid || isAdmin()) &&
              data.members is list && data.members.size() >= 2 &&
              data.members.size() <= 20 &&
              data.createdAt is number;
@@ -94,7 +99,11 @@ service cloud.firestore {
       let data = request.resource.data;
       return hasOnlyAllowedFields(['groupId', 'senderId', 'senderName', 'senderPhoto', 'senderRole', 'text', 'createdAt']) &&
              data.senderId == request.auth.uid &&
-             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+             data.groupId is string &&
+             data.senderName is string &&
+             data.senderPhoto is string &&
+             data.senderRole in ['user', 'admin'] &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 5000 &&
              data.createdAt is number;
     }
 
@@ -130,7 +139,7 @@ service cloud.firestore {
 
     match /messages/{messageId} {
       allow read: if isAuthenticated() && !isBanned() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
-      allow create: if isAuthenticated() && !isBanned() && !isTimedOut() && isValidMessage();
+      allow create: if canMessage() && isValidMessage();
     }
 
     match /calls/{callId} {
@@ -154,7 +163,7 @@ service cloud.firestore {
 
     match /groupMessages/{messageId} {
       allow read: if isAuthenticated() && !isBanned() && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members;
-      allow create: if isAuthenticated() && !isBanned() && !isTimedOut() && isValidGroupMessage() && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
+      allow create: if canMessage() && isValidGroupMessage() && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
     }
 
     function isValidAnnouncement() {

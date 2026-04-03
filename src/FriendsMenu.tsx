@@ -275,12 +275,16 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       );
 
       const unsub = onSnapshot(q, (snap) => {
+        console.log('Messages snapshot received:', snap.size);
         const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
         setMessages(msgs);
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 100);
-      }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
+      }, (error) => {
+        console.error('Messages listener error:', error);
+        handleFirestoreError(error, OperationType.LIST, 'messages');
+      });
 
       return () => unsub();
     } else if (activeGroup) {
@@ -652,9 +656,10 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       if (activeChat) {
         setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to send message', err);
-      setError('Failed to send message. Please try again.');
+      const errorMessage = err?.message || 'Failed to send message. Please try again.';
+      setError(errorMessage);
       const path = activeChat ? 'messages' : 'groupMessages';
       try {
         handleFirestoreError(err, OperationType.CREATE, path);
