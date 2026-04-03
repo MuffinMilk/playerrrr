@@ -12,7 +12,7 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          ((request.auth.token.email == "awdrej.puente@icloud.com" || request.auth.token.email == "awdrepuente408@gmail.com") && request.auth.token.email_verified == true));
+          (request.auth.token.email == "awdrej.puente@icloud.com" || request.auth.token.email == "awdrepuente408@gmail.com"));
     }
     function isBanned() {
       return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned == true;
@@ -155,9 +155,19 @@ service cloud.firestore {
       allow create: if isAuthenticated() && !isBanned() && !isTimedOut() && isValidGroupMessage() && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
     }
 
+    function isValidAnnouncement() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['text', 'authorId', 'authorName', 'createdAt']) &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 2000 &&
+             data.authorId == request.auth.uid &&
+             data.authorName is string &&
+             data.createdAt is number;
+    }
+
     match /announcements/{announcementId} {
       allow read: if isAuthenticated() && !isBanned();
-      allow create, delete: if isAdmin();
+      allow create: if isAdmin() && isValidAnnouncement();
+      allow delete: if isAdmin();
     }
   }
 }

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft, Camera, Phone, Video, PhoneOff, Mic, MicOff, VideoOff, Plus } from 'lucide-react';
 import { auth, db, storage } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc, updateDoc, orderBy, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { handleFirestoreError, OperationType } from './firebase';
 
@@ -202,11 +202,11 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           setGroups(gList);
         }, (error) => handleFirestoreError(error, OperationType.LIST, 'groups'));
 
-        const qAnnouncements = query(collection(db, 'announcements'), where('createdAt', '>', Date.now() - 86400000));
+        const qAnnouncements = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(20));
         unsubAnnouncements = onSnapshot(qAnnouncements, (snapshot) => {
           const aList: Announcement[] = [];
           snapshot.forEach(doc => aList.push({ id: doc.id, ...doc.data() } as Announcement));
-          setAnnouncements(aList.sort((a, b) => b.createdAt - a.createdAt));
+          setAnnouncements(aList);
         }, (error) => handleFirestoreError(error, OperationType.LIST, 'announcements'));
 
         const qFriendships1 = query(collection(db, 'friendships'), where('user1', '==', currentUser.uid));
@@ -409,6 +409,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       });
       setSuccess(`Warned ${targetUser.displayName}`);
     } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${targetUser.uid}`);
       setError('Failed to warn user');
     }
   };
@@ -421,6 +422,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       await updateDoc(userRef, { timeoutUntil });
       setSuccess(`Timed out ${targetUser.displayName} for ${minutes} minutes`);
     } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${targetUser.uid}`);
       setError('Failed to timeout user');
     }
   };
@@ -432,6 +434,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       await updateDoc(userRef, { isBanned: true });
       setSuccess(`Banned ${targetUser.displayName}`);
     } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${targetUser.uid}`);
       setError('Failed to ban user');
     }
   };
@@ -442,13 +445,14 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       await addDoc(collection(db, 'announcements'), {
         text: announcementText.trim(),
         authorId: user?.uid,
-        authorName: profile.displayName,
+        authorName: profile?.displayName || user?.displayName || 'Admin',
         createdAt: Date.now()
       });
       setAnnouncementText('');
       setIsAnnouncing(false);
       setSuccess('Announcement sent!');
     } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'announcements');
       setError('Failed to send announcement');
     }
   };
@@ -665,6 +669,8 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
         setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
       }
     } catch (err) {
+      const path = activeChat ? 'messages' : 'groupMessages';
+      handleFirestoreError(err, OperationType.CREATE, path);
       console.error('Failed to send message', err);
     }
   };

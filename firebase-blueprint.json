@@ -190,6 +190,10 @@
         "required": ["groupId", "senderId", "text", "createdAt"]
       },
       "description": "Messages in group chats"
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/Announcement" },
+      "description": "Global announcements from admins"
     }
   }
 }

@@ -20,7 +20,7 @@ import {
 import FriendsMenu from './FriendsMenu';
 import { auth, db } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, orderBy, limit } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from './firebase';
 
 interface Song {
@@ -141,16 +141,19 @@ export default function App() {
           if (docSnap.exists()) {
             setUserProfile(docSnap.data());
           }
-        });
+        }, (error) => handleFirestoreError(error, OperationType.GET, `users/${user.uid}`));
 
-        const q = query(collection(db, 'announcements'), where('createdAt', '>', Date.now() - 3600000)); // Last hour
+        const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(1));
         unsubscribeAnnouncements = onSnapshot(q, (snapshot) => {
           if (!snapshot.empty) {
-            const latest = snapshot.docs.sort((a, b) => b.data().createdAt - a.data().createdAt)[0].data();
-            setGlobalAnnouncement({ text: latest.text, authorName: latest.authorName });
-            setTimeout(() => setGlobalAnnouncement(null), 10000);
+            const latest = snapshot.docs[0].data();
+            // Only show if it's relatively recent (e.g. last 10 minutes)
+            if (latest.createdAt > Date.now() - 600000) {
+              setGlobalAnnouncement({ text: latest.text, authorName: latest.authorName || 'Admin' });
+              setTimeout(() => setGlobalAnnouncement(null), 10000);
+            }
           }
-        });
+        }, (error) => handleFirestoreError(error, OperationType.LIST, 'announcements'));
       } else {
         setUserProfile(null);
       }
