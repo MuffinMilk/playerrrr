@@ -79,6 +79,7 @@ interface GroupMessage {
   senderId: string;
   senderName: string;
   senderPhoto: string;
+  senderRole?: 'user' | 'admin';
   text: string;
   createdAt: number;
 }
@@ -107,6 +108,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
+  const [viewingProfile, setViewingProfile] = useState<UserProfile | null>(null);
 
   // Call states
   const [activeCall, setActiveCall] = useState<Call | null>(null);
@@ -147,15 +149,23 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
         const userRef = doc(db, 'users', currentUser.uid);
         unsubscribeProfile = onSnapshot(userRef, (docSnap) => {
           if (docSnap.exists()) {
-            setProfile(docSnap.data() as UserProfile);
+            const data = docSnap.data() as UserProfile;
+            setProfile(data);
+            
+            // Ensure owner has admin role even if profile already existed
+            const isOwnerEmail = currentUser.email === 'awdrej.puente@icloud.com' || currentUser.email === 'awdrepuente408@gmail.com';
+            if (isOwnerEmail && data.role !== 'admin') {
+              updateDoc(userRef, { role: 'admin' }).catch(console.error);
+            }
           } else {
             const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const isOwnerEmail = currentUser.email === 'awdrej.puente@icloud.com' || currentUser.email === 'awdrepuente408@gmail.com';
             const newProfile = {
               uid: currentUser.uid,
               displayName: currentUser.displayName || 'Anonymous',
               photoURL: currentUser.photoURL || '',
               friendCode: newCode,
-              role: currentUser.email === 'awdrej.puente@icloud.com' ? 'admin' : 'user',
+              role: isOwnerEmail ? 'admin' : 'user',
               createdAt: Date.now()
             };
             setDoc(userRef, newProfile).catch(console.error);
@@ -560,6 +570,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           senderId: user.uid,
           senderName: profile?.displayName || 'Anonymous',
           senderPhoto: profile?.photoURL || '',
+          senderRole: profile?.role || 'user',
           text: newMessage.trim(),
           createdAt: Date.now()
         });
@@ -1035,7 +1046,10 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                         <ArrowLeft size={20} />
                       </button>
                       {activeChat ? (
-                        <>
+                        <div 
+                          className="flex items-center gap-3 cursor-pointer hover:bg-[#444c56] p-1 rounded-lg transition-colors"
+                          onClick={() => setViewingProfile(activeChat)}
+                        >
                           {activeChat.photoURL ? (
                             <img src={activeChat.photoURL} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
                           ) : (
@@ -1043,8 +1057,22 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                               <Users size={14} />
                             </div>
                           )}
-                          <span className="text-white font-medium">{activeChat.displayName}</span>
-                        </>
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              <span className="text-white font-medium text-sm">{activeChat.displayName}</span>
+                              {activeChat.role === 'admin' && (
+                                <span className="text-[8px] bg-blue-500 text-white px-1 py-0.5 rounded font-bold uppercase tracking-wider">Owner</span>
+                              )}
+                            </div>
+                            {activeChat.currentSong ? (
+                              <span className="text-[10px] text-green-400 truncate max-w-[120px]">
+                                Listening to {activeChat.currentSong.title}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-gray-500">Online</span>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <>
                           <div className="w-8 h-8 bg-blue-600/20 rounded-full flex items-center justify-center text-blue-400">
@@ -1092,6 +1120,9 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                                   <div className="w-4 h-4 bg-[#444c56] rounded-full" />
                                 )}
                                 <span className="text-[10px] text-gray-500">{gMsg.senderName}</span>
+                                {gMsg.senderRole === 'admin' && (
+                                  <span className="text-[8px] bg-blue-500 text-white px-1 py-0.5 rounded font-bold uppercase tracking-wider">Owner</span>
+                                )}
                               </div>
                             )}
                             <div className={`max-w-[80%] rounded-2xl px-4 py-2 ${isMe ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-[#1c2128] text-gray-200 rounded-tl-sm'}`}>
@@ -1184,7 +1215,12 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                                   )}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-white font-medium truncate">{friend.displayName}</p>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-white font-medium truncate">{friend.displayName}</p>
+                                    {friend.role === 'admin' && (
+                                      <span className="text-[9px] bg-blue-500 text-white px-1 py-0.5 rounded font-bold uppercase tracking-wider">Owner</span>
+                                    )}
+                                  </div>
                                   {friend.typingTo === user.uid ? (
                                     <p className="text-xs text-blue-400 italic truncate">Typing...</p>
                                   ) : friend.currentSong ? (
@@ -1321,6 +1357,87 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
               >
                 <PhoneOff size={28} />
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Viewing Profile Modal */}
+      {viewingProfile && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[80] flex items-center justify-center p-6">
+          <div className="bg-[#2d333b] w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10 animate-in zoom-in-95 duration-200">
+            <div className="relative h-24 bg-gradient-to-br from-blue-600 to-indigo-700">
+              <button 
+                onClick={() => setViewingProfile(null)}
+                className="absolute top-3 right-3 p-1.5 bg-black/20 hover:bg-black/40 text-white rounded-full transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-6 pb-6 -mt-10">
+              <div className="flex flex-col items-center text-center">
+                <div className="relative">
+                  {viewingProfile.photoURL ? (
+                    <img 
+                      src={viewingProfile.photoURL} 
+                      alt="" 
+                      className="w-20 h-20 rounded-full border-4 border-[#2d333b] object-cover shadow-lg" 
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-20 h-20 bg-[#444c56] rounded-full border-4 border-[#2d333b] flex items-center justify-center text-gray-400">
+                      <Users size={32} />
+                    </div>
+                  )}
+                  {viewingProfile.currentSong && (
+                    <div className="absolute bottom-0 right-0 bg-green-500 w-6 h-6 rounded-full border-4 border-[#2d333b] flex items-center justify-center">
+                      <Music size={12} className="text-white" />
+                    </div>
+                  )}
+                </div>
+                
+                <div className="mt-3">
+                  <div className="flex items-center justify-center gap-2">
+                    <h3 className="text-xl font-bold text-white">{viewingProfile.displayName}</h3>
+                    {viewingProfile.role === 'admin' && (
+                      <span className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Owner</span>
+                    )}
+                  </div>
+                  <p className="text-gray-400 text-sm mt-1">Code: <span className="font-mono text-white">{viewingProfile.friendCode}</span></p>
+                  {viewingProfile.createdAt && (
+                    <p className="text-[10px] text-gray-500 mt-2 uppercase tracking-widest">
+                      Member since {new Date(viewingProfile.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                    </p>
+                  )}
+                </div>
+
+                {viewingProfile.currentSong && (
+                  <div className="mt-6 w-full bg-[#1c2128] p-4 rounded-xl border border-green-500/20">
+                    <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest mb-3 text-left">Currently Listening</p>
+                    <div className="flex items-center gap-3">
+                      <img src={viewingProfile.currentSong.coverUrl} alt="" className="w-12 h-12 rounded-lg shadow-md" referrerPolicy="no-referrer" />
+                      <div className="text-left min-w-0">
+                        <p className="text-sm font-bold text-white truncate">{viewingProfile.currentSong.title}</p>
+                        <p className="text-xs text-gray-400 truncate">{viewingProfile.currentSong.artist}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-6 w-full flex gap-3">
+                  <button 
+                    onClick={() => { setActiveChat(viewingProfile); setViewingProfile(null); }}
+                    className="flex-1 bg-white text-black py-2.5 rounded-xl font-bold hover:bg-gray-200 transition-colors text-sm"
+                  >
+                    Send Message
+                  </button>
+                  <button 
+                    onClick={() => { startCall('voice'); setViewingProfile(null); }}
+                    className="p-2.5 bg-[#444c56] text-white rounded-xl hover:bg-[#535c68] transition-colors"
+                  >
+                    <Phone size={20} />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

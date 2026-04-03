@@ -12,7 +12,7 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "awdrej.puente@icloud.com" && request.auth.token.email_verified == true));
+          ((request.auth.token.email == "awdrej.puente@icloud.com" || request.auth.token.email == "awdrepuente408@gmail.com") && request.auth.token.email_verified == true));
     }
     function hasOnlyAllowedFields(allowedFields) {
       return request.resource.data.keys().hasOnly(allowedFields);
