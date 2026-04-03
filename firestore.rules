@@ -138,7 +138,11 @@ service cloud.firestore {
     }
 
     match /messages/{messageId} {
-      allow read: if isAuthenticated() && !isBanned() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      allow read: if isAuthenticated() && !isBanned() && (
+        resource.data.senderId == request.auth.uid || 
+        resource.data.receiverId == request.auth.uid ||
+        resource.data.conversationId.matches(".*" + request.auth.uid + ".*")
+      );
       allow create: if canMessage() && isValidMessage();
     }
 
@@ -162,8 +166,8 @@ service cloud.firestore {
     }
 
     match /groupMessages/{messageId} {
-      allow read: if isAuthenticated() && !isBanned() && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members;
-      allow create: if canMessage() && isValidGroupMessage() && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
+      allow read: if isAuthenticated() && !isBanned();
+      allow create: if canMessage() && isValidGroupMessage() && (isAdmin() || request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members);
     }
 
     function isValidAnnouncement() {

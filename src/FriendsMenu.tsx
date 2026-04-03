@@ -268,24 +268,32 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
 
     if (activeChat) {
       const convId = [user.uid, activeChat.uid].sort().join('_');
+      console.log('Setting up message listener for convId:', convId, 'user.uid:', user.uid, 'activeChat.uid:', activeChat.uid);
       const q = query(
         collection(db, 'messages'),
         where('conversationId', '==', convId)
       );
 
       const unsub = onSnapshot(q, (snap) => {
-        console.log('Messages snapshot received:', snap.size);
-        const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        console.log('Messages snapshot received for convId:', convId, 'size:', snap.size);
+        const msgs = snap.docs.map(doc => {
+          const data = doc.data();
+          return { id: doc.id, ...data } as Message;
+        });
+        console.log('Messages mapped:', msgs.length);
         setMessages(msgs.sort((a, b) => a.createdAt - b.createdAt));
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 100);
       }, (error) => {
-        console.error('Messages listener error:', error);
+        console.error('Messages listener error for convId:', convId, error);
         handleFirestoreError(error, OperationType.LIST, 'messages');
       });
 
-      return () => unsub();
+      return () => {
+        console.log('Cleaning up message listener for convId:', convId);
+        unsub();
+      };
     } else if (activeGroup) {
       const q = query(
         collection(db, 'groupMessages'),
@@ -629,9 +637,9 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     }
 
     try {
-      console.log('Sending message...', { activeChat, activeGroup, newMessage });
       if (activeChat) {
         const convId = [user.uid, activeChat.uid].sort().join('_');
+        console.log('Sending message to convId:', convId, 'text:', newMessage.trim());
         await addDoc(collection(db, 'messages'), {
           senderId: user.uid,
           receiverId: activeChat.uid,
@@ -639,7 +647,9 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           text: newMessage.trim(),
           createdAt: Date.now()
         });
+        console.log('Message sent successfully to convId:', convId);
       } else if (activeGroup) {
+        console.log('Sending group message to groupId:', activeGroup.id);
         await addDoc(collection(db, 'groupMessages'), {
           groupId: activeGroup.id,
           senderId: user.uid,
@@ -649,6 +659,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           text: newMessage.trim(),
           createdAt: Date.now()
         });
+        console.log('Group message sent successfully');
       }
       setNewMessage('');
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -1293,7 +1304,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                           groups.map(group => (
                             <div 
                               key={group.id}
-                              onClick={() => setActiveGroup(group)}
+                              onClick={() => { setActiveGroup(group); setActiveChat(null); }}
                               className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg cursor-pointer hover:bg-[#30363d] transition-colors"
                             >
                               <div className="w-10 h-10 bg-blue-600/20 rounded-full flex items-center justify-center text-blue-400">
@@ -1320,7 +1331,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                             {friends.map(friend => (
                               <div 
                                 key={friend.uid} 
-                                onClick={() => setActiveChat(friend)}
+                                onClick={() => { setActiveChat(friend); setActiveGroup(null); }}
                                 className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg cursor-pointer hover:bg-[#30363d] transition-colors"
                               >
                                 <div className="relative">
