@@ -9,11 +9,14 @@ interface State {
   error: Error | null;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
-    hasError: false,
-    error: null
-  };
+export class ErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null
+    };
+  }
 
   public static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
@@ -24,13 +27,16 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public render() {
-    if (this.state.hasError) {
+    const { hasError, error } = this.state;
+    const { children } = this.props;
+
+    if (hasError) {
       return (
         <div className="min-h-screen bg-[#0f1115] flex items-center justify-center p-4 text-white">
           <div className="bg-[#22272e] p-6 rounded-xl max-w-lg w-full shadow-2xl">
             <h2 className="text-xl font-bold text-red-400 mb-4">Something went wrong</h2>
             <pre className="bg-[#1c2128] p-4 rounded-lg overflow-auto text-sm text-gray-300 whitespace-pre-wrap max-h-[400px]">
-              {this.state.error?.message}
+              {error?.message}
             </pre>
             <button 
               onClick={() => window.location.reload()}
@@ -43,6 +49,6 @@ export class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    return this.props.children;
+    return children;
   }
 }

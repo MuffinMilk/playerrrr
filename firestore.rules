@@ -9,15 +9,22 @@ service cloud.firestore {
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "awdrej.puente@icloud.com" && request.auth.token.email_verified == true));
+    }
     function hasOnlyAllowedFields(allowedFields) {
       return request.resource.data.keys().hasOnly(allowedFields);
     }
     function isValidUser() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'friendCode', 'currentSong', 'typingTo']) &&
+      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'friendCode', 'currentSong', 'typingTo', 'role', 'createdAt']) &&
              data.uid == request.auth.uid &&
              data.friendCode is string && data.friendCode.size() > 0 && data.friendCode.size() <= 20 &&
-             (!('typingTo' in data) || data.typingTo is string);
+             (!('typingTo' in data) || data.typingTo is string) &&
+             (!('role' in data) || data.role in ['user', 'admin']) &&
+             (!('createdAt' in data) || data.createdAt is number);
     }
     function isValidFriendRequest() {
       let data = request.resource.data;
@@ -80,8 +87,8 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isOwner(userId) && isValidUser();
-      allow update: if isOwner(userId) && isValidUser();
+      allow create: if isOwner(userId) && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == 'user' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role || isAdmin());
     }
 
     match /friendRequests/{requestId} {

@@ -29,6 +29,8 @@ interface UserProfile {
   photoURL: string;
   friendCode: string;
   typingTo?: string;
+  role?: 'user' | 'admin';
+  createdAt?: number;
   currentSong?: {
     title: string;
     artist: string;
@@ -152,7 +154,9 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
               uid: currentUser.uid,
               displayName: currentUser.displayName || 'Anonymous',
               photoURL: currentUser.photoURL || '',
-              friendCode: newCode
+              friendCode: newCode,
+              role: currentUser.email === 'awdrej.puente@icloud.com' ? 'admin' : 'user',
+              createdAt: Date.now()
             };
             setDoc(userRef, newProfile).catch(console.error);
           }
@@ -885,10 +889,20 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                   </label>
                 </div>
                 <div>
-                  <p className="text-white font-medium">{profile?.displayName}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-white font-medium">{profile?.displayName}</p>
+                    {profile?.role === 'admin' && (
+                      <span className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">Owner</span>
+                    )}
+                  </div>
                   <p className="text-xs text-gray-400 flex items-center gap-1">
                     Code: <span className="font-mono text-white tracking-wider">{profile?.friendCode}</span>
                   </p>
+                  {profile?.createdAt && (
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      Joined {new Date(profile.createdAt).toLocaleDateString()}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2">
