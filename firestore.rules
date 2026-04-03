@@ -61,9 +61,11 @@ service cloud.firestore {
     }
     function isValidMessage() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['senderId', 'receiverId', 'text', 'createdAt']) &&
+      return hasOnlyAllowedFields(['senderId', 'receiverId', 'conversationId', 'text', 'createdAt']) &&
              data.senderId == request.auth.uid &&
-             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+             data.receiverId is string &&
+             data.conversationId is string &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 5000 &&
              data.createdAt is number;
     }
     function isValidCall() {

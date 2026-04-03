@@ -53,6 +53,7 @@ interface Message {
   id: string;
   senderId: string;
   receiverId: string;
+  conversationId: string;
   text: string;
   createdAt: number;
 }
@@ -266,42 +267,22 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     }
 
     if (activeChat) {
-      const q1 = query(
+      const convId = [user.uid, activeChat.uid].sort().join('_');
+      const q = query(
         collection(db, 'messages'),
-        where('senderId', '==', user.uid),
-        where('receiverId', '==', activeChat.uid)
-      );
-      const q2 = query(
-        collection(db, 'messages'),
-        where('senderId', '==', activeChat.uid),
-        where('receiverId', '==', user.uid)
+        where('conversationId', '==', convId),
+        orderBy('createdAt', 'asc')
       );
 
-      let msgs1: Message[] = [];
-      let msgs2: Message[] = [];
-
-      const updateMessages = () => {
-        const allMsgs = [...msgs1, ...msgs2].sort((a, b) => a.createdAt - b.createdAt);
-        setMessages(allMsgs);
+      const unsub = onSnapshot(q, (snap) => {
+        const msgs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        setMessages(msgs);
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }, 100);
-      };
-
-      const unsub1 = onSnapshot(q1, (snap) => {
-        msgs1 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-        updateMessages();
       }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
 
-      const unsub2 = onSnapshot(q2, (snap) => {
-        msgs2 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-        updateMessages();
-      }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
-
-      return () => {
-        unsub1();
-        unsub2();
-      };
+      return () => unsub();
     } else if (activeGroup) {
       const q = query(
         collection(db, 'groupMessages'),
@@ -645,10 +626,13 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     }
 
     try {
+      console.log('Sending message...', { activeChat, activeGroup, newMessage });
       if (activeChat) {
+        const convId = [user.uid, activeChat.uid].sort().join('_');
         await addDoc(collection(db, 'messages'), {
           senderId: user.uid,
           receiverId: activeChat.uid,
+          conversationId: convId,
           text: newMessage.trim(),
           createdAt: Date.now()
         });
@@ -669,9 +653,14 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
         setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
       }
     } catch (err) {
-      const path = activeChat ? 'messages' : 'groupMessages';
-      handleFirestoreError(err, OperationType.CREATE, path);
       console.error('Failed to send message', err);
+      setError('Failed to send message. Please try again.');
+      const path = activeChat ? 'messages' : 'groupMessages';
+      try {
+        handleFirestoreError(err, OperationType.CREATE, path);
+      } catch (e) {
+        // handleFirestoreError throws, which is expected for the AIS Agent
+      }
     }
   };
 
@@ -695,6 +684,9 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     } catch (err) {
       console.error('Failed to create group', err);
       setError('Failed to create group.');
+      try {
+        handleFirestoreError(err, OperationType.CREATE, 'groups');
+      } catch (e) {}
     }
   };
 

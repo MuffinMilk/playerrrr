@@ -80,10 +80,11 @@
       "properties": {
         "senderId": { "type": "string" },
         "receiverId": { "type": "string" },
+        "conversationId": { "type": "string", "description": "Sorted UIDs joined by underscore" },
         "text": { "type": "string" },
         "createdAt": { "type": "number" }
       },
-      "required": ["senderId", "receiverId", "text", "createdAt"]
+      "required": ["senderId", "receiverId", "conversationId", "text", "createdAt"]
     },
     "Call": {
       "title": "Call",
