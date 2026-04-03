@@ -90,7 +90,7 @@ service cloud.firestore {
     }
     function isValidGroupMessage() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['groupId', 'senderId', 'senderName', 'senderPhoto', 'text', 'createdAt']) &&
+      return hasOnlyAllowedFields(['groupId', 'senderId', 'senderName', 'senderPhoto', 'senderRole', 'text', 'createdAt']) &&
              data.senderId == request.auth.uid &&
              data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
              data.createdAt is number;
