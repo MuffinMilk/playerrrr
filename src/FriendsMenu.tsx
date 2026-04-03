@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft } from 'lucide-react';
-import { auth, db } from './firebase';
+import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft, Camera } from 'lucide-react';
+import { auth, db, storage } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { handleFirestoreError, OperationType } from './firebase';
 
 interface FriendRequest {
@@ -52,6 +53,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [uploading, setUploading] = useState(false);
   
   // Chat states
   const [activeChat, setActiveChat] = useState<UserProfile | null>(null);
@@ -331,6 +333,35 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const handleProfilePicChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setUploading(true);
+    setError('');
+    
+    try {
+      const storageRef = ref(storage, `profile_pics/${user.uid}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      // Update Auth profile
+      await updateProfile(user, { photoURL: downloadURL });
+      
+      // Update Firestore profile
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, { photoURL: downloadURL }, { merge: true });
+      
+      setSuccess('Profile picture updated!');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Failed to upload profile picture', err);
+      setError('Failed to update profile picture.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
     setNewMessage(e.target.value);
     if (!user || !activeChat) return;
@@ -492,13 +523,19 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
             {/* Profile & Friend Code */}
             <div className="bg-[#2d333b] p-4 rounded-xl flex items-center justify-between">
               <div className="flex items-center gap-3">
-                {profile?.photoURL ? (
-                  <img src={profile.photoURL} alt="Profile" className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-10 h-10 bg-[#444c56] rounded-full flex items-center justify-center">
-                    <Users size={20} />
-                  </div>
-                )}
+                <div className="relative group cursor-pointer">
+                  {profile?.photoURL ? (
+                    <img src={profile.photoURL} alt="Profile" className="w-12 h-12 rounded-full object-cover border-2 border-transparent group-hover:border-white/20 transition-all" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-12 h-12 bg-[#444c56] rounded-full flex items-center justify-center border-2 border-transparent group-hover:border-white/20 transition-all">
+                      <Users size={24} />
+                    </div>
+                  )}
+                  <label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                    {uploading ? <Loader2 className="animate-spin text-white" size={16} /> : <Camera size={16} className="text-white" />}
+                    <input type="file" className="hidden" accept="image/*" onChange={handleProfilePicChange} disabled={uploading} />
+                  </label>
+                </div>
                 <div>
                   <p className="text-white font-medium">{profile?.displayName}</p>
                   <p className="text-xs text-gray-400 flex items-center gap-1">
