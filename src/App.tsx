@@ -76,7 +76,8 @@ export default function App() {
   const [isLooping, setIsLooping] = useState(false);
   const [showFriendsMenu, setShowFriendsMenu] = useState(false);
   const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
-  const [userProfile, setUserProfile] = useState<{ photoURL?: string, displayName?: string } | null>(null);
+  const [userProfile, setUserProfile] = useState<{ photoURL?: string, displayName?: string, isBanned?: boolean } | null>(null);
+  const [globalAnnouncement, setGlobalAnnouncement] = useState<{ text: string, authorName: string } | null>(null);
   
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [activePlaylist, setActivePlaylist] = useState<Playlist | null>(null);
@@ -128,14 +129,26 @@ export default function App() {
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | null = null;
+    let unsubscribeAnnouncements: (() => void) | null = null;
+
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUserUid(user ? user.uid : null);
       if (unsubscribeProfile) unsubscribeProfile();
+      if (unsubscribeAnnouncements) unsubscribeAnnouncements();
       
       if (user) {
         unsubscribeProfile = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
           if (docSnap.exists()) {
             setUserProfile(docSnap.data());
+          }
+        });
+
+        const q = query(collection(db, 'announcements'), where('createdAt', '>', Date.now() - 3600000)); // Last hour
+        unsubscribeAnnouncements = onSnapshot(q, (snapshot) => {
+          if (!snapshot.empty) {
+            const latest = snapshot.docs.sort((a, b) => b.data().createdAt - a.data().createdAt)[0].data();
+            setGlobalAnnouncement({ text: latest.text, authorName: latest.authorName });
+            setTimeout(() => setGlobalAnnouncement(null), 10000);
           }
         });
       } else {
@@ -145,6 +158,7 @@ export default function App() {
     return () => {
       unsubscribeAuth();
       if (unsubscribeProfile) unsubscribeProfile();
+      if (unsubscribeAnnouncements) unsubscribeAnnouncements();
     };
   }, []);
 
@@ -495,8 +509,44 @@ export default function App() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  if (userProfile?.isBanned) {
+    return (
+      <div className="min-h-screen bg-[#0d1117] flex items-center justify-center p-6 text-center">
+        <div className="max-w-md">
+          <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Lock className="text-red-500" size={40} />
+          </div>
+          <h1 className="text-3xl font-bold text-white mb-4">Account Banned</h1>
+          <p className="text-gray-400 mb-8 leading-relaxed">
+            Your account has been permanently banned from the platform for violating our community guidelines. 
+            If you believe this is a mistake, please contact support.
+          </p>
+          <button 
+            onClick={() => auth.signOut()}
+            className="bg-white text-black px-8 py-3 rounded-xl font-bold hover:bg-gray-200 transition-colors"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#0f1115] flex items-center justify-center p-4 font-sans text-gray-200 relative">
+    <div className="min-h-screen bg-[#0f1115] flex items-center justify-center p-4 font-sans text-gray-200 relative overflow-hidden">
+      {/* Global Announcement Banner */}
+      {globalAnnouncement && (
+        <div className="fixed top-0 left-0 right-0 bg-blue-600 text-white px-4 py-2 text-center text-sm font-medium animate-in slide-in-from-top duration-300 z-[100]">
+          <div className="max-w-4xl mx-auto flex items-center justify-center gap-2">
+            <Music size={16} className="animate-pulse" />
+            <span>
+              <strong className="uppercase tracking-wider mr-2">{globalAnnouncement.authorName}:</strong> 
+              {globalAnnouncement.text}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row gap-4 w-full max-w-5xl h-[800px] max-h-[90vh] z-10">
         
         {/* Left Panel - Player */}

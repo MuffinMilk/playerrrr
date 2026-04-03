@@ -14,16 +14,27 @@ service cloud.firestore {
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
           ((request.auth.token.email == "awdrej.puente@icloud.com" || request.auth.token.email == "awdrepuente408@gmail.com") && request.auth.token.email_verified == true));
     }
+    function isBanned() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned == true;
+    }
+    function isTimedOut() {
+      return isAuthenticated() && 
+             ('timeoutUntil' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.timeoutUntil > request.time.toMillis();
+    }
     function hasOnlyAllowedFields(allowedFields) {
       return request.resource.data.keys().hasOnly(allowedFields);
     }
     function isValidUser() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'friendCode', 'currentSong', 'typingTo', 'role', 'createdAt']) &&
+      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'friendCode', 'currentSong', 'typingTo', 'role', 'createdAt', 'isBanned', 'timeoutUntil', 'warnings']) &&
              data.uid == request.auth.uid &&
              data.friendCode is string && data.friendCode.size() > 0 && data.friendCode.size() <= 20 &&
              (!('typingTo' in data) || data.typingTo is string) &&
              (!('role' in data) || data.role in ['user', 'admin']) &&
+             (!('isBanned' in data) || data.isBanned is bool) &&
+             (!('timeoutUntil' in data) || data.timeoutUntil is number) &&
+             (!('warnings' in data) || data.warnings is list) &&
              (!('createdAt' in data) || data.createdAt is number);
     }
     function isValidFriendRequest() {
@@ -87,8 +98,13 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isOwner(userId) && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == 'user' || isAdmin());
-      allow update: if isOwner(userId) && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role || isAdmin());
+      allow create: if isOwner(userId) && !isBanned() && isValidUser() && (!('role' in request.resource.data) || request.resource.data.role == 'user' || isAdmin());
+      allow update: if (isOwner(userId) && !isBanned() && isValidUser() && 
+                       (!('role' in request.resource.data) || request.resource.data.role == resource.data.role) &&
+                       (!('isBanned' in request.resource.data) || request.resource.data.isBanned == resource.data.isBanned) &&
+                       (!('timeoutUntil' in request.resource.data) || request.resource.data.timeoutUntil == resource.data.timeoutUntil) &&
+                       (!('warnings' in request.resource.data) || request.resource.data.warnings == resource.data.warnings)) || 
+                       isAdmin();
     }
 
     match /friendRequests/{requestId} {
@@ -111,8 +127,8 @@ service cloud.firestore {
     }
 
     match /messages/{messageId} {
-      allow read: if isAuthenticated() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
-      allow create: if isAuthenticated() && isValidMessage();
+      allow read: if isAuthenticated() && !isBanned() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      allow create: if isAuthenticated() && !isBanned() && !isTimedOut() && isValidMessage();
     }
 
     match /calls/{callId} {
@@ -135,8 +151,13 @@ service cloud.firestore {
     }
 
     match /groupMessages/{messageId} {
-      allow read: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members;
-      allow create: if isAuthenticated() && isValidGroupMessage() && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
+      allow read: if isAuthenticated() && !isBanned() && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members;
+      allow create: if isAuthenticated() && !isBanned() && !isTimedOut() && isValidGroupMessage() && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isAuthenticated() && !isBanned();
+      allow create, delete: if isAdmin();
     }
   }
 }

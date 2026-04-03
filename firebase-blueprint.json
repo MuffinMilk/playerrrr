@@ -11,6 +11,18 @@
         "friendCode": { "type": "string" },
         "typingTo": { "type": "string" },
         "role": { "type": "string", "enum": ["user", "admin"] },
+        "isBanned": { "type": "boolean" },
+        "timeoutUntil": { "type": "number" },
+        "warnings": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "createdAt": { "type": "number" }
+            }
+          }
+        },
         "createdAt": { "type": "number" },
         "currentSong": {
           "type": "object",
@@ -99,12 +111,28 @@
         "createdAt": { "type": "number" }
       },
       "required": ["callId", "senderId", "candidate", "createdAt"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "A global announcement from an admin",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["text", "authorId", "authorName", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
       "description": "User profiles"
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/Announcement" },
+      "description": "Global announcements"
     },
     "/friendRequests/{requestId}": {
       "schema": { "$ref": "#/entities/FriendRequest" },
@@ -155,6 +183,7 @@
           "senderId": { "type": "string" },
           "senderName": { "type": "string" },
           "senderPhoto": { "type": "string" },
+          "senderRole": { "type": "string", "enum": ["user", "admin"] },
           "text": { "type": "string" },
           "createdAt": { "type": "number" }
         },

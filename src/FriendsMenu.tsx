@@ -30,12 +30,23 @@ interface UserProfile {
   friendCode: string;
   typingTo?: string;
   role?: 'user' | 'admin';
+  isBanned?: boolean;
+  timeoutUntil?: number;
+  warnings?: { text: string; createdAt: number }[];
   createdAt?: number;
   currentSong?: {
     title: string;
     artist: string;
     coverUrl: string;
   };
+}
+
+interface Announcement {
+  id: string;
+  text: string;
+  authorId: string;
+  authorName: string;
+  createdAt: number;
 }
 
 interface Message {
@@ -109,6 +120,9 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [groupName, setGroupName] = useState('');
   const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
   const [viewingProfile, setViewingProfile] = useState<UserProfile | null>(null);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [isAnnouncing, setIsAnnouncing] = useState(false);
+  const [announcementText, setAnnouncementText] = useState('');
 
   // Call states
   const [activeCall, setActiveCall] = useState<Call | null>(null);
@@ -133,6 +147,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     let unsubF2: (() => void) | null = null;
     let unsubFriends: (() => void) | null = null;
     let unsubGroups: (() => void) | null = null;
+    let unsubAnnouncements: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -144,6 +159,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       if (unsubF2) unsubF2();
       if (unsubFriends) unsubFriends();
       if (unsubGroups) unsubGroups();
+      if (unsubAnnouncements) unsubAnnouncements();
 
       if (currentUser) {
         const userRef = doc(db, 'users', currentUser.uid);
@@ -185,6 +201,13 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           snapshot.forEach(doc => gList.push({ id: doc.id, ...doc.data() } as Group));
           setGroups(gList);
         }, (error) => handleFirestoreError(error, OperationType.LIST, 'groups'));
+
+        const qAnnouncements = query(collection(db, 'announcements'), where('createdAt', '>', Date.now() - 86400000));
+        unsubAnnouncements = onSnapshot(qAnnouncements, (snapshot) => {
+          const aList: Announcement[] = [];
+          snapshot.forEach(doc => aList.push({ id: doc.id, ...doc.data() } as Announcement));
+          setAnnouncements(aList.sort((a, b) => b.createdAt - a.createdAt));
+        }, (error) => handleFirestoreError(error, OperationType.LIST, 'announcements'));
 
         const qFriendships1 = query(collection(db, 'friendships'), where('user1', '==', currentUser.uid));
         const qFriendships2 = query(collection(db, 'friendships'), where('user2', '==', currentUser.uid));
@@ -231,6 +254,8 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       if (unsubF1) unsubF1();
       if (unsubF2) unsubF2();
       if (unsubFriends) unsubFriends();
+      if (unsubGroups) unsubGroups();
+      if (unsubAnnouncements) unsubAnnouncements();
     };
   }, []);
 
@@ -373,6 +398,60 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
     }
   }, [activeChat, user]);
+
+  const warnUser = async (targetUser: UserProfile, text: string) => {
+    if (!profile || profile.role !== 'admin') return;
+    const userRef = doc(db, 'users', targetUser.uid);
+    const newWarning = { text, createdAt: Date.now() };
+    try {
+      await updateDoc(userRef, {
+        warnings: [...(targetUser.warnings || []), newWarning]
+      });
+      setSuccess(`Warned ${targetUser.displayName}`);
+    } catch (err) {
+      setError('Failed to warn user');
+    }
+  };
+
+  const timeoutUser = async (targetUser: UserProfile, minutes: number) => {
+    if (!profile || profile.role !== 'admin') return;
+    const userRef = doc(db, 'users', targetUser.uid);
+    const timeoutUntil = Date.now() + minutes * 60000;
+    try {
+      await updateDoc(userRef, { timeoutUntil });
+      setSuccess(`Timed out ${targetUser.displayName} for ${minutes} minutes`);
+    } catch (err) {
+      setError('Failed to timeout user');
+    }
+  };
+
+  const banUser = async (targetUser: UserProfile) => {
+    if (!profile || profile.role !== 'admin') return;
+    const userRef = doc(db, 'users', targetUser.uid);
+    try {
+      await updateDoc(userRef, { isBanned: true });
+      setSuccess(`Banned ${targetUser.displayName}`);
+    } catch (err) {
+      setError('Failed to ban user');
+    }
+  };
+
+  const sendAnnouncement = async () => {
+    if (!profile || profile.role !== 'admin' || !announcementText.trim()) return;
+    try {
+      await addDoc(collection(db, 'announcements'), {
+        text: announcementText.trim(),
+        authorId: user?.uid,
+        authorName: profile.displayName,
+        createdAt: Date.now()
+      });
+      setAnnouncementText('');
+      setIsAnnouncing(false);
+      setSuccess('Announcement sent!');
+    } catch (err) {
+      setError('Failed to send announcement');
+    }
+  };
 
   const handleLogin = async () => {
     try {
@@ -555,6 +634,11 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !user || (!activeChat && !activeGroup)) return;
+
+    if (profile?.timeoutUntil && profile.timeoutUntil > Date.now()) {
+      setError(`You are timed out until ${new Date(profile.timeoutUntil).toLocaleString()}`);
+      return;
+    }
 
     try {
       if (activeChat) {
@@ -925,6 +1009,41 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
             </div>
+
+            {/* Announcements Section */}
+            {(announcements.length > 0 || profile?.role === 'admin') && (
+              <div className="bg-[#2d333b] p-4 rounded-xl border border-blue-500/20">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-blue-400 uppercase tracking-wider flex items-center gap-2">
+                    <Music size={16} /> Announcements
+                  </h4>
+                  {profile?.role === 'admin' && (
+                    <button 
+                      onClick={() => setIsAnnouncing(true)}
+                      className="p-1.5 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition-colors"
+                      title="New Announcement"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-3 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                  {announcements.length === 0 ? (
+                    <p className="text-xs text-gray-500 italic">No recent announcements.</p>
+                  ) : (
+                    announcements.map(a => (
+                      <div key={a.id} className="bg-[#1c2128] p-3 rounded-lg border border-white/5">
+                        <p className="text-xs text-white leading-relaxed">{a.text}</p>
+                        <div className="mt-2 flex items-center justify-between">
+                          <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">{a.authorName}</span>
+                          <span className="text-[10px] text-gray-500">{new Date(a.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Add Friend & Create Group */}
             <div className="flex gap-4">
@@ -1437,6 +1556,80 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                     <Phone size={20} />
                   </button>
                 </div>
+
+                {profile?.role === 'admin' && viewingProfile.uid !== user?.uid && (
+                  <div className="mt-6 w-full pt-6 border-t border-white/10">
+                    <p className="text-[10px] text-red-500 font-bold uppercase tracking-widest mb-3 text-left">Admin Actions</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button 
+                        onClick={() => {
+                          const text = prompt('Enter warning message:');
+                          if (text) warnUser(viewingProfile, text);
+                        }}
+                        className="bg-yellow-500/10 text-yellow-500 py-2 rounded-lg text-xs font-bold hover:bg-yellow-500/20 transition-colors border border-yellow-500/20"
+                      >
+                        Warn
+                      </button>
+                      <button 
+                        onClick={() => {
+                          const mins = prompt('Enter timeout minutes:');
+                          if (mins) timeoutUser(viewingProfile, parseInt(mins));
+                        }}
+                        className="bg-orange-500/10 text-orange-500 py-2 rounded-lg text-xs font-bold hover:bg-orange-500/20 transition-colors border border-orange-500/20"
+                      >
+                        Timeout
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (confirm(`Are you sure you want to ban ${viewingProfile.displayName}?`)) {
+                            banUser(viewingProfile);
+                          }
+                        }}
+                        className="bg-red-500/10 text-red-500 py-2 rounded-lg text-xs font-bold hover:bg-red-500/20 transition-colors border border-red-500/20 col-span-2"
+                      >
+                        Ban User
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAnnouncing && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[90] flex items-center justify-center p-6">
+          <div className="bg-[#2d333b] w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-blue-500/30 animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Music className="text-blue-400" size={20} /> New Announcement
+                </h3>
+                <button onClick={() => setIsAnnouncing(false)} className="text-gray-400 hover:text-white">
+                  <X size={20} />
+                </button>
+              </div>
+              <textarea
+                value={announcementText}
+                onChange={(e) => setAnnouncementText(e.target.value)}
+                placeholder="What would you like to announce to everyone?"
+                className="w-full bg-[#1c2128] text-white p-4 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 border border-[#444c56] h-32 resize-none text-sm leading-relaxed"
+              />
+              <div className="mt-6 flex gap-3">
+                <button 
+                  onClick={() => setIsAnnouncing(false)}
+                  className="flex-1 bg-[#444c56] text-white py-2.5 rounded-xl font-bold hover:bg-[#535c68] transition-colors text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={sendAnnouncement}
+                  disabled={!announcementText.trim()}
+                  className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Post Announcement
+                </button>
               </div>
             </div>
           </div>
