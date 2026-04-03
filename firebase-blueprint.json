@@ -70,6 +70,33 @@
         "createdAt": { "type": "number" }
       },
       "required": ["senderId", "receiverId", "text", "createdAt"]
+    },
+    "Call": {
+      "title": "Call",
+      "description": "A voice/video call between friends",
+      "type": "object",
+      "properties": {
+        "callerId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "offer": { "type": "object" },
+        "answer": { "type": "object" },
+        "status": { "type": "string", "enum": ["ringing", "ongoing", "ended"] },
+        "type": { "type": "string", "enum": ["voice", "video"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["callerId", "receiverId", "status", "type", "createdAt"]
+    },
+    "CallCandidate": {
+      "title": "CallCandidate",
+      "description": "An ICE candidate for WebRTC",
+      "type": "object",
+      "properties": {
+        "callId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "candidate": { "type": "object" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["callId", "senderId", "candidate", "createdAt"]
     }
   },
   "firestore": {
@@ -92,6 +119,14 @@
     "/messages/{messageId}": {
       "schema": { "$ref": "#/entities/Message" },
       "description": "Chat messages"
+    },
+    "/calls/{callId}": {
+      "schema": { "$ref": "#/entities/Call" },
+      "description": "Active or past calls"
+    },
+    "/calls/{callId}/candidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/CallCandidate" },
+      "description": "ICE candidates for a call"
     }
   }
 }

@@ -48,6 +48,20 @@ service cloud.firestore {
              data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
              data.createdAt is number;
     }
+    function isValidCall() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['callerId', 'receiverId', 'offer', 'answer', 'status', 'type', 'createdAt']) &&
+             (data.callerId == request.auth.uid || data.receiverId == request.auth.uid) &&
+             data.status in ['ringing', 'ongoing', 'ended'] &&
+             data.type in ['voice', 'video'] &&
+             data.createdAt is number;
+    }
+    function isValidCandidate() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['callId', 'senderId', 'candidate', 'createdAt']) &&
+             data.senderId == request.auth.uid &&
+             data.createdAt is number;
+    }
 
     match /users/{userId} {
       allow read: if isAuthenticated();
@@ -77,6 +91,18 @@ service cloud.firestore {
     match /messages/{messageId} {
       allow read: if isAuthenticated() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
       allow create: if isAuthenticated() && isValidMessage();
+    }
+
+    match /calls/{callId} {
+      allow read: if isAuthenticated() && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidCall();
+      allow update: if isAuthenticated() && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid) && isValidCall();
+      allow delete: if isAuthenticated() && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+
+      match /candidates/{candidateId} {
+        allow read: if isAuthenticated() && (get(/databases/$(database)/documents/calls/$(callId)).data.callerId == request.auth.uid || get(/databases/$(database)/documents/calls/$(callId)).data.receiverId == request.auth.uid);
+        allow create: if isAuthenticated() && isValidCandidate();
+      }
     }
   }
 }

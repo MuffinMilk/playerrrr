@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft, Camera } from 'lucide-react';
+import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft, Camera, Phone, Video, PhoneOff, Mic, MicOff, VideoOff } from 'lucide-react';
 import { auth, db, storage } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { handleFirestoreError, OperationType } from './firebase';
 
@@ -44,6 +44,25 @@ interface Message {
   createdAt: number;
 }
 
+interface Call {
+  id: string;
+  callerId: string;
+  receiverId: string;
+  offer?: any;
+  answer?: any;
+  status: 'ringing' | 'ongoing' | 'ended';
+  type: 'voice' | 'video';
+  createdAt: number;
+}
+
+interface CallCandidate {
+  id: string;
+  callId: string;
+  senderId: string;
+  candidate: any;
+  createdAt: number;
+}
+
 export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -61,6 +80,15 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const typingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Call states
+  const [activeCall, setActiveCall] = useState<Call | null>(null);
+  const [incomingCall, setIncomingCall] = useState<Call | null>(null);
+  const [callStream, setCallStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+  const pcRef = React.useRef<RTCPeerConnection | null>(null);
 
   // Auth states
   const [authMode, setAuthMode] = useState<'select' | 'login' | 'signup'>('select');
@@ -201,6 +229,77 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       unsub2();
     };
   }, [user, activeChat]);
+
+  // Listen for incoming calls
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'calls'),
+      where('receiverId', '==', user.uid),
+      where('status', '==', 'ringing')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const callData = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Call;
+        // Only set if not already in a call
+        if (!activeCall && !incomingCall) {
+          setIncomingCall(callData);
+        }
+      } else {
+        setIncomingCall(null);
+      }
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'calls'));
+
+    return () => unsubscribe();
+  }, [user, activeCall, incomingCall]);
+
+  // Listen for active call updates (answer, ended)
+  useEffect(() => {
+    if (!activeCall || !user) return;
+
+    const unsubscribe = onSnapshot(doc(db, 'calls', activeCall.id), async (snapshot) => {
+      if (!snapshot.exists()) {
+        endCallLocally();
+        return;
+      }
+
+      const data = snapshot.data() as Call;
+      if (data.status === 'ended') {
+        endCallLocally();
+      } else if (data.status === 'ongoing' && data.answer && !pcRef.current?.remoteDescription) {
+        const remoteDesc = new RTCSessionDescription(data.answer);
+        await pcRef.current?.setRemoteDescription(remoteDesc);
+      }
+    }, (error) => handleFirestoreError(error, OperationType.GET, `calls/${activeCall.id}`));
+
+    return () => unsubscribe();
+  }, [activeCall, user]);
+
+  // Listen for ICE candidates
+  useEffect(() => {
+    if (!activeCall || !user) return;
+
+    const q = query(
+      collection(db, `calls/${activeCall.id}/candidates`),
+      where('senderId', '!=', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach(async (change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data() as CallCandidate;
+          if (pcRef.current) {
+            const candidate = new RTCIceCandidate(data.candidate);
+            await pcRef.current.addIceCandidate(candidate);
+          }
+        }
+      });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, `calls/${activeCall.id}/candidates`));
+
+    return () => unsubscribe();
+  }, [activeCall, user]);
 
   useEffect(() => {
     if (!activeChat && user) {
@@ -402,6 +501,145 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
     } catch (err) {
       console.error('Failed to send message', err);
+    }
+  };
+
+  const setupPeerConnection = (callId: string) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }
+      ]
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && user) {
+        addDoc(collection(db, `calls/${callId}/candidates`), {
+          callId,
+          senderId: user.uid,
+          candidate: event.candidate.toJSON(),
+          createdAt: Date.now()
+        }).catch(console.error);
+      }
+    };
+
+    pc.ontrack = (event) => {
+      setRemoteStream(event.streams[0]);
+    };
+
+    pcRef.current = pc;
+    return pc;
+  };
+
+  const startCall = async (type: 'voice' | 'video') => {
+    if (!user || !activeChat) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: type === 'video'
+      });
+      setCallStream(stream);
+
+      const callRef = await addDoc(collection(db, 'calls'), {
+        callerId: user.uid,
+        receiverId: activeChat.uid,
+        status: 'ringing',
+        type,
+        createdAt: Date.now()
+      });
+
+      const pc = setupPeerConnection(callRef.id);
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      await updateDoc(callRef, {
+        offer: { type: offer.type, sdp: offer.sdp }
+      });
+
+      setActiveCall({ id: callRef.id, callerId: user.uid, receiverId: activeChat.uid, status: 'ringing', type, createdAt: Date.now() });
+    } catch (err) {
+      console.error('Failed to start call', err);
+      setError('Could not access camera/microphone.');
+    }
+  };
+
+  const acceptCall = async () => {
+    if (!incomingCall || !user) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: incomingCall.type === 'video'
+      });
+      setCallStream(stream);
+
+      const pc = setupPeerConnection(incomingCall.id);
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      const offer = new RTCSessionDescription(incomingCall.offer);
+      await pc.setRemoteDescription(offer);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      await updateDoc(doc(db, 'calls', incomingCall.id), {
+        answer: { type: answer.type, sdp: answer.sdp },
+        status: 'ongoing'
+      });
+
+      setActiveCall({ ...incomingCall, status: 'ongoing' });
+      setIncomingCall(null);
+    } catch (err) {
+      console.error('Failed to accept call', err);
+      setError('Could not access camera/microphone.');
+    }
+  };
+
+  const endCall = async () => {
+    if (!activeCall) return;
+    try {
+      await updateDoc(doc(db, 'calls', activeCall.id), { status: 'ended' });
+    } catch (err) {
+      console.error('Failed to end call', err);
+    }
+    endCallLocally();
+  };
+
+  const endCallLocally = () => {
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+    if (callStream) {
+      callStream.getTracks().forEach(track => track.stop());
+      setCallStream(null);
+    }
+    setRemoteStream(null);
+    setActiveCall(null);
+    setIncomingCall(null);
+    setIsMicMuted(false);
+    setIsVideoOff(false);
+  };
+
+  const toggleMic = () => {
+    if (callStream) {
+      const audioTrack = callStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsMicMuted(!audioTrack.enabled);
+      }
+    }
+  };
+
+  const toggleVideo = () => {
+    if (callStream) {
+      const videoTrack = callStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsVideoOff(!videoTrack.enabled);
+      }
     }
   };
 
@@ -621,18 +859,37 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
             <div className="bg-[#2d333b] p-4 rounded-xl flex-1 flex flex-col min-h-0">
               {activeChat ? (
                 <div className="flex flex-col h-full">
-                  <div className="flex items-center gap-3 mb-4 pb-4 border-b border-[#444c56]">
-                    <button onClick={() => setActiveChat(null)} className="p-1 hover:bg-[#444c56] rounded-md transition-colors text-gray-400 hover:text-white">
-                      <ArrowLeft size={20} />
-                    </button>
-                    {activeChat.photoURL ? (
-                      <img src={activeChat.photoURL} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="w-8 h-8 bg-[#444c56] rounded-full flex items-center justify-center">
-                        <Users size={14} />
-                      </div>
-                    )}
-                    <span className="text-white font-medium">{activeChat.displayName}</span>
+                  <div className="flex items-center justify-between mb-4 pb-4 border-b border-[#444c56]">
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => setActiveChat(null)} className="p-1 hover:bg-[#444c56] rounded-md transition-colors text-gray-400 hover:text-white">
+                        <ArrowLeft size={20} />
+                      </button>
+                      {activeChat.photoURL ? (
+                        <img src={activeChat.photoURL} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-8 h-8 bg-[#444c56] rounded-full flex items-center justify-center">
+                          <Users size={14} />
+                        </div>
+                      )}
+                      <span className="text-white font-medium">{activeChat.displayName}</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => startCall('voice')}
+                        className="p-2 hover:bg-[#444c56] rounded-full transition-colors text-gray-400 hover:text-green-400"
+                        title="Voice Call"
+                      >
+                        <Phone size={20} />
+                      </button>
+                      <button 
+                        onClick={() => startCall('video')}
+                        className="p-2 hover:bg-[#444c56] rounded-full transition-colors text-gray-400 hover:text-blue-400"
+                        title="Video Call"
+                      >
+                        <Video size={20} />
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 mb-4 pr-2">
@@ -726,6 +983,123 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
           </>
         )}
       </div>
+
+      {/* Incoming Call Notification */}
+      {incomingCall && (
+        <div className="absolute top-6 left-6 right-6 bg-[#2d333b] border border-blue-500/50 rounded-2xl p-4 shadow-2xl z-[60] animate-in slide-in-from-top duration-300">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-blue-500/20 rounded-full flex items-center justify-center text-blue-400 animate-pulse">
+                {incomingCall.type === 'video' ? <Video size={24} /> : <Phone size={24} />}
+              </div>
+              <div>
+                <p className="text-white font-bold">Incoming {incomingCall.type} call</p>
+                <p className="text-gray-400 text-sm">From {friends.find(f => f.uid === incomingCall.callerId)?.displayName || 'Friend'}</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => updateDoc(doc(db, 'calls', incomingCall.id), { status: 'ended' })}
+                className="p-3 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-full transition-colors"
+              >
+                <PhoneOff size={24} />
+              </button>
+              <button 
+                onClick={acceptCall}
+                className="p-3 bg-green-500 text-white hover:bg-green-600 rounded-full transition-colors"
+              >
+                <Phone size={24} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active Call Overlay */}
+      {activeCall && (
+        <div className="absolute inset-0 bg-black/90 z-[70] flex flex-col items-center justify-center p-6">
+          <div className="relative w-full max-w-2xl aspect-video bg-[#1c2128] rounded-3xl overflow-hidden shadow-2xl border border-white/10">
+            {/* Remote Video */}
+            {activeCall.type === 'video' ? (
+              remoteStream ? (
+                <video 
+                  ref={el => { if (el) el.srcObject = remoteStream; }} 
+                  autoPlay 
+                  playsInline 
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-4">
+                  <div className="w-24 h-24 bg-[#2d333b] rounded-full flex items-center justify-center text-gray-500 animate-pulse">
+                    <Users size={48} />
+                  </div>
+                  <p className="text-gray-400">{activeCall.status === 'ringing' ? 'Calling...' : 'Connecting...'}</p>
+                </div>
+              )
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center gap-6">
+                <div className="relative">
+                  <div className="w-32 h-32 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-400 animate-pulse">
+                    <Users size={64} />
+                  </div>
+                  <div className="absolute inset-0 border-4 border-blue-500/30 rounded-full animate-ping" />
+                </div>
+                <div className="text-center">
+                  <h4 className="text-2xl font-bold text-white mb-2">
+                    {friends.find(f => f.uid === (activeCall.callerId === user?.uid ? activeCall.receiverId : activeCall.callerId))?.displayName || 'Friend'}
+                  </h4>
+                  <p className="text-blue-400 font-medium uppercase tracking-widest text-sm">
+                    {activeCall.status === 'ringing' ? 'Ringing...' : 'Ongoing Call'}
+                  </p>
+                </div>
+                {/* Hidden audio element for voice calls */}
+                {remoteStream && (
+                  <audio ref={el => { if (el) el.srcObject = remoteStream; }} autoPlay />
+                )}
+              </div>
+            )}
+
+            {/* Local Video (Picture in Picture) */}
+            {activeCall.type === 'video' && callStream && (
+              <div className="absolute bottom-6 right-6 w-1/4 aspect-video bg-black rounded-xl overflow-hidden border-2 border-white/20 shadow-xl">
+                <video 
+                  ref={el => { if (el) el.srcObject = callStream; }} 
+                  autoPlay 
+                  playsInline 
+                  muted 
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+
+            {/* Call Controls */}
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-6 bg-black/40 backdrop-blur-xl p-4 px-8 rounded-full border border-white/10">
+              <button 
+                onClick={toggleMic}
+                className={`p-4 rounded-full transition-all ${isMicMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
+              >
+                {isMicMuted ? <MicOff size={24} /> : <Mic size={24} />}
+              </button>
+              
+              {activeCall.type === 'video' && (
+                <button 
+                  onClick={toggleVideo}
+                  className={`p-4 rounded-full transition-all ${isVideoOff ? 'bg-red-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                >
+                  {isVideoOff ? <VideoOff size={24} /> : <Video size={24} />}
+                </button>
+              )}
+
+              <button 
+                onClick={endCall}
+                className="p-4 bg-red-600 text-white rounded-full hover:bg-red-700 transition-all hover:scale-110 shadow-lg"
+              >
+                <PhoneOff size={28} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
