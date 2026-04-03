@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music } from 'lucide-react';
+import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music, ArrowLeft } from 'lucide-react';
 import { auth, db } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc } from 'firebase/firestore';
@@ -34,6 +34,14 @@ interface UserProfile {
   };
 }
 
+interface Message {
+  id: string;
+  senderId: string;
+  receiverId: string;
+  text: string;
+  createdAt: number;
+}
+
 export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -44,6 +52,12 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
+  // Chat states
+  const [activeChat, setActiveChat] = useState<UserProfile | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
+
   // Auth states
   const [authMode, setAuthMode] = useState<'select' | 'login' | 'signup'>('select');
   const [email, setEmail] = useState('');
@@ -131,6 +145,50 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!user || !activeChat) {
+      setMessages([]);
+      return;
+    }
+
+    const q1 = query(
+      collection(db, 'messages'),
+      where('senderId', '==', user.uid),
+      where('receiverId', '==', activeChat.uid)
+    );
+    const q2 = query(
+      collection(db, 'messages'),
+      where('senderId', '==', activeChat.uid),
+      where('receiverId', '==', user.uid)
+    );
+
+    let msgs1: Message[] = [];
+    let msgs2: Message[] = [];
+
+    const updateMessages = () => {
+      const allMsgs = [...msgs1, ...msgs2].sort((a, b) => a.createdAt - b.createdAt);
+      setMessages(allMsgs);
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    };
+
+    const unsub1 = onSnapshot(q1, (snap) => {
+      msgs1 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+      updateMessages();
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
+
+    const unsub2 = onSnapshot(q2, (snap) => {
+      msgs2 = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+      updateMessages();
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'messages'));
+
+    return () => {
+      unsub1();
+      unsub2();
+    };
+  }, [user, activeChat]);
 
   const handleLogin = async () => {
     try {
@@ -262,6 +320,23 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       navigator.clipboard.writeText(profile.friendCode);
       setSuccess('Friend code copied!');
       setTimeout(() => setSuccess(''), 3000);
+    }
+  };
+
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !user || !activeChat) return;
+
+    try {
+      await addDoc(collection(db, 'messages'), {
+        senderId: user.uid,
+        receiverId: activeChat.uid,
+        text: newMessage.trim(),
+        createdAt: Date.now()
+      });
+      setNewMessage('');
+    } catch (err) {
+      console.error('Failed to send message', err);
     }
   };
 
@@ -466,39 +541,100 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
             )}
 
             {/* Friends List */}
-            <div className="bg-[#2d333b] p-4 rounded-xl flex-1">
-              <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Your Friends</h4>
-              {friends.length === 0 ? (
-                <p className="text-gray-500 text-sm text-center py-4">No friends yet. Add someone using their code!</p>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {friends.map(friend => (
-                    <div key={friend.uid} className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg">
-                      <div className="relative">
-                        {friend.photoURL ? (
-                          <img src={friend.photoURL} alt="" className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />
-                        ) : (
-                          <div className="w-10 h-10 bg-[#444c56] rounded-full flex items-center justify-center">
-                            <Users size={16} />
+            <div className="bg-[#2d333b] p-4 rounded-xl flex-1 flex flex-col min-h-0">
+              {activeChat ? (
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center gap-3 mb-4 pb-4 border-b border-[#444c56]">
+                    <button onClick={() => setActiveChat(null)} className="p-1 hover:bg-[#444c56] rounded-md transition-colors text-gray-400 hover:text-white">
+                      <ArrowLeft size={20} />
+                    </button>
+                    {activeChat.photoURL ? (
+                      <img src={activeChat.photoURL} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-8 h-8 bg-[#444c56] rounded-full flex items-center justify-center">
+                        <Users size={14} />
+                      </div>
+                    )}
+                    <span className="text-white font-medium">{activeChat.displayName}</span>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 mb-4 pr-2">
+                    {messages.length === 0 ? (
+                      <p className="text-gray-500 text-sm text-center my-auto">Say hi to {activeChat.displayName}!</p>
+                    ) : (
+                      messages.map(msg => {
+                        const isMe = msg.senderId === user.uid;
+                        return (
+                          <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[80%] rounded-2xl px-4 py-2 ${isMe ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-[#1c2128] text-gray-200 rounded-tl-sm'}`}>
+                              <p className="text-sm break-words">{msg.text}</p>
+                            </div>
                           </div>
-                        )}
-                        {friend.currentSong && (
-                          <div className="absolute -bottom-1 -right-1 bg-green-500 w-3.5 h-3.5 rounded-full border-2 border-[#1c2128]" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-white font-medium truncate">{friend.displayName}</p>
-                        {friend.currentSong ? (
-                          <p className="text-xs text-green-400 truncate flex items-center gap-1">
-                            <Music size={10} /> {friend.currentSong.title} - {friend.currentSong.artist}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-gray-500">Offline</p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                        );
+                      })
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
+
+                  <form onSubmit={sendMessage} className="flex gap-2 mt-auto">
+                    <input
+                      type="text"
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      placeholder="Message..."
+                      className="flex-1 bg-[#1c2128] text-white px-4 py-2 rounded-full outline-none focus:ring-2 focus:ring-white/20 text-sm"
+                    />
+                    <button 
+                      type="submit" 
+                      disabled={!newMessage.trim()}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-full font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                    >
+                      Send
+                    </button>
+                  </form>
                 </div>
+              ) : (
+                <>
+                  <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Your Friends</h4>
+                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                    {friends.length === 0 ? (
+                      <p className="text-gray-500 text-sm text-center py-4">No friends yet. Add someone using their code!</p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {friends.map(friend => (
+                          <div 
+                            key={friend.uid} 
+                            onClick={() => setActiveChat(friend)}
+                            className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg cursor-pointer hover:bg-[#30363d] transition-colors"
+                          >
+                            <div className="relative">
+                              {friend.photoURL ? (
+                                <img src={friend.photoURL} alt="" className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />
+                              ) : (
+                                <div className="w-10 h-10 bg-[#444c56] rounded-full flex items-center justify-center">
+                                  <Users size={16} />
+                                </div>
+                              )}
+                              {friend.currentSong && (
+                                <div className="absolute -bottom-1 -right-1 bg-green-500 w-3.5 h-3.5 rounded-full border-2 border-[#1c2128]" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white font-medium truncate">{friend.displayName}</p>
+                              {friend.currentSong ? (
+                                <p className="text-xs text-green-400 truncate flex items-center gap-1">
+                                  <Music size={10} /> {friend.currentSong.title} - {friend.currentSong.artist}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-gray-500">Offline</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           </>

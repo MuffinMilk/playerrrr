@@ -40,6 +40,13 @@ service cloud.firestore {
              (data.isFavorites is bool || !('isFavorites' in data)) &&
              data.createdAt is number;
     }
+    function isValidMessage() {
+      let data = request.resource.data;
+      return hasOnlyAllowedFields(['senderId', 'receiverId', 'text', 'createdAt']) &&
+             data.senderId == request.auth.uid &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+             data.createdAt is number;
+    }
 
     match /users/{userId} {
       allow read: if isAuthenticated();
@@ -64,6 +71,11 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidPlaylist();
       allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidPlaylist();
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidMessage();
     }
   }
 }

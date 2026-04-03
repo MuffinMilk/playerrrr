@@ -57,6 +57,18 @@
         "createdAt": { "type": "number" }
       },
       "required": ["userId", "name", "songs", "createdAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A chat message between friends",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["senderId", "receiverId", "text", "createdAt"]
     }
   },
   "firestore": {
@@ -75,6 +87,10 @@
     "/playlists/{playlistId}": {
       "schema": { "$ref": "#/entities/Playlist" },
       "description": "User playlists"
+    },
+    "/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Chat messages"
     }
   }
 }
