@@ -1,0 +1,509 @@
+import React, { useState, useEffect } from 'react';
+import { Users, UserPlus, Check, X, Copy, LogIn, LogOut, Loader2, Music } from 'lucide-react';
+import { auth, db } from './firebase';
+import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { collection, query, where, onSnapshot, setDoc, doc, getDocs, deleteDoc, addDoc } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from './firebase';
+
+interface FriendRequest {
+  id: string;
+  fromUid: string;
+  fromName: string;
+  fromPhoto: string;
+  toUid: string;
+  status: string;
+  createdAt: number;
+}
+
+interface Friendship {
+  id: string;
+  user1: string;
+  user2: string;
+  createdAt: number;
+}
+
+interface UserProfile {
+  uid: string;
+  displayName: string;
+  photoURL: string;
+  friendCode: string;
+  currentSong?: {
+    title: string;
+    artist: string;
+    coverUrl: string;
+  };
+}
+
+export default function FriendsMenu({ onClose }: { onClose: () => void }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [friendCodeInput, setFriendCodeInput] = useState('');
+  const [requests, setRequests] = useState<FriendRequest[]>([]);
+  const [friends, setFriends] = useState<UserProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  
+  // Auth states
+  const [authMode, setAuthMode] = useState<'select' | 'login' | 'signup'>('select');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        // Check if user profile exists, if not create one
+        const userRef = doc(db, 'users', currentUser.uid);
+        const unsubscribeProfile = onSnapshot(userRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setProfile(docSnap.data() as UserProfile);
+          } else {
+            // Create new profile
+            const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const newProfile = {
+              uid: currentUser.uid,
+              displayName: currentUser.displayName || 'Anonymous',
+              photoURL: currentUser.photoURL || '',
+              friendCode: newCode
+            };
+            setDoc(userRef, newProfile).catch(console.error);
+          }
+        }, (error) => handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`));
+
+        // Listen for incoming friend requests
+        const qRequests = query(collection(db, 'friendRequests'), where('toUid', '==', currentUser.uid));
+        const unsubscribeRequests = onSnapshot(qRequests, (snapshot) => {
+          const reqs: FriendRequest[] = [];
+          snapshot.forEach(doc => reqs.push({ id: doc.id, ...doc.data() } as FriendRequest));
+          setRequests(reqs);
+        }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendRequests'));
+
+        // Listen for friendships
+        const qFriendships1 = query(collection(db, 'friendships'), where('user1', '==', currentUser.uid));
+        const qFriendships2 = query(collection(db, 'friendships'), where('user2', '==', currentUser.uid));
+        
+        let unsubFriends: (() => void) | null = null;
+
+        const handleFriendships = async (snapshot1: any, snapshot2: any) => {
+          const friendUids = new Set<string>();
+          snapshot1?.forEach((doc: any) => friendUids.add(doc.data().user2));
+          snapshot2?.forEach((doc: any) => friendUids.add(doc.data().user1));
+          
+          if (unsubFriends) {
+            unsubFriends();
+            unsubFriends = null;
+          }
+
+          if (friendUids.size > 0) {
+            const qFriends = query(collection(db, 'users'), where('uid', 'in', Array.from(friendUids)));
+            unsubFriends = onSnapshot(qFriends, (friendsSnap) => {
+              const fList: UserProfile[] = [];
+              friendsSnap.forEach(doc => fList.push(doc.data() as UserProfile));
+              setFriends(fList);
+            }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
+          } else {
+            setFriends([]);
+          }
+        };
+
+        let snap1: any, snap2: any;
+        const unsubF1 = onSnapshot(qFriendships1, (s) => { snap1 = s; handleFriendships(snap1, snap2); }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendships'));
+        const unsubF2 = onSnapshot(qFriendships2, (s) => { snap2 = s; handleFriendships(snap1, snap2); }, (error) => handleFirestoreError(error, OperationType.LIST, 'friendships'));
+
+        setLoading(false);
+        return () => {
+          unsubscribeProfile();
+          unsubscribeRequests();
+          unsubF1();
+          unsubF2();
+          if (unsubFriends) unsubFriends();
+        };
+      } else {
+        setProfile(null);
+        setRequests([]);
+        setFriends([]);
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async () => {
+    try {
+      setAuthError('');
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      console.error(err);
+      setAuthError(err.message);
+    }
+  };
+
+  const handleEmailSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(userCredential.user, { displayName: username });
+      
+      // Update the user document with the new displayName since onAuthStateChanged 
+      // might have fired before updateProfile finished
+      const userRef = doc(db, 'users', userCredential.user.uid);
+      await setDoc(userRef, { displayName: username }, { merge: true });
+    } catch (err: any) {
+      console.error(err);
+      if (err.code === 'auth/email-already-in-use') {
+        setAuthError('An account with this email already exists. Please sign in instead.');
+      } else if (err.code === 'auth/operation-not-allowed') {
+        setAuthError('Email/Password sign-in is not enabled. Please enable it in the Firebase Console under Authentication > Sign-in method.');
+      } else if (err.code === 'auth/weak-password') {
+        setAuthError('Password should be at least 6 characters.');
+      } else {
+        setAuthError(err.message);
+      }
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err: any) {
+      console.error(err);
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+        setAuthError('Invalid email or password.');
+      } else if (err.code === 'auth/operation-not-allowed') {
+        setAuthError('Email/Password sign-in is not enabled. Please enable it in the Firebase Console under Authentication > Sign-in method.');
+      } else {
+        setAuthError(err.message);
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+  };
+
+  const sendFriendRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    if (!friendCodeInput.trim() || !user || !profile) return;
+
+    if (friendCodeInput.toUpperCase() === profile.friendCode) {
+      setError("You can't add yourself!");
+      return;
+    }
+
+    try {
+      // Find user by friend code
+      const q = query(collection(db, 'users'), where('friendCode', '==', friendCodeInput.toUpperCase()));
+      const querySnapshot = await getDocs(q);
+      
+      if (querySnapshot.empty) {
+        setError('Friend code not found.');
+        return;
+      }
+
+      const targetUser = querySnapshot.docs[0].data() as UserProfile;
+
+      // Check if already friends
+      if (friends.some(f => f.uid === targetUser.uid)) {
+        setError('Already friends with this user.');
+        return;
+      }
+
+      // Send request
+      await addDoc(collection(db, 'friendRequests'), {
+        fromUid: user.uid,
+        fromName: profile.displayName,
+        fromPhoto: profile.photoURL,
+        toUid: targetUser.uid,
+        status: 'pending',
+        createdAt: Date.now()
+      });
+
+      setSuccess('Friend request sent!');
+      setFriendCodeInput('');
+    } catch (err) {
+      console.error(err);
+      setError('Failed to send request.');
+    }
+  };
+
+  const acceptRequest = async (req: FriendRequest) => {
+    try {
+      await addDoc(collection(db, 'friendships'), {
+        user1: req.fromUid,
+        user2: req.toUid,
+        createdAt: Date.now()
+      });
+      await deleteDoc(doc(db, 'friendRequests', req.id));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const declineRequest = async (reqId: string) => {
+    try {
+      await deleteDoc(doc(db, 'friendRequests', reqId));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const copyFriendCode = () => {
+    if (profile?.friendCode) {
+      navigator.clipboard.writeText(profile.friendCode);
+      setSuccess('Friend code copied!');
+      setTimeout(() => setSuccess(''), 3000);
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 bg-[#22272e]/95 backdrop-blur-md z-50 flex flex-col p-6 overflow-hidden">
+      <div className="flex justify-between items-center mb-6">
+        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+          <Users size={24} /> Friends
+        </h3>
+        <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors outline-none">
+          <X size={24} />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar flex flex-col gap-6">
+        {loading ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="animate-spin text-gray-400" size={32} />
+          </div>
+        ) : !user ? (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
+            <Users size={48} className="text-[#444c56]" />
+            <p className="text-gray-400 mb-4">Sign in to add friends and see what they're listening to.</p>
+            
+            {authError && <p className="text-red-400 text-sm max-w-xs">{authError}</p>}
+
+            {authMode === 'select' && (
+              <div className="flex flex-col gap-3 w-full max-w-xs">
+                <button 
+                  onClick={handleLogin}
+                  className="bg-white text-black px-6 py-2.5 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors"
+                >
+                  <LogIn size={20} /> Continue with Google
+                </button>
+                <div className="relative flex items-center py-2">
+                  <div className="flex-grow border-t border-[#444c56]"></div>
+                  <span className="flex-shrink-0 mx-4 text-[#8b949e] text-sm">or</span>
+                  <div className="flex-grow border-t border-[#444c56]"></div>
+                </div>
+                <button 
+                  onClick={() => setAuthMode('signup')}
+                  className="bg-[#2d333b] text-white px-6 py-2.5 rounded-lg font-medium hover:bg-[#444c56] transition-colors border border-[#444c56]"
+                >
+                  Create Account
+                </button>
+                <button 
+                  onClick={() => setAuthMode('login')}
+                  className="text-[#8b949e] hover:text-white transition-colors text-sm mt-2"
+                >
+                  Already have an account? Sign In
+                </button>
+              </div>
+            )}
+
+            {authMode === 'signup' && (
+              <form onSubmit={handleEmailSignUp} className="flex flex-col gap-3 w-full max-w-xs">
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="bg-[#1c2128] text-white px-4 py-2.5 rounded-lg outline-none focus:ring-2 focus:ring-white/20 border border-[#444c56]"
+                  required
+                />
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="bg-[#1c2128] text-white px-4 py-2.5 rounded-lg outline-none focus:ring-2 focus:ring-white/20 border border-[#444c56]"
+                  required
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="bg-[#1c2128] text-white px-4 py-2.5 rounded-lg outline-none focus:ring-2 focus:ring-white/20 border border-[#444c56]"
+                  required
+                  minLength={6}
+                />
+                <button type="submit" className="bg-white text-black px-6 py-2.5 rounded-lg font-medium hover:bg-gray-200 transition-colors mt-2">
+                  Sign Up
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setAuthMode('select')}
+                  className="text-[#8b949e] hover:text-white transition-colors text-sm mt-2"
+                >
+                  Back
+                </button>
+              </form>
+            )}
+
+            {authMode === 'login' && (
+              <form onSubmit={handleEmailLogin} className="flex flex-col gap-3 w-full max-w-xs">
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="bg-[#1c2128] text-white px-4 py-2.5 rounded-lg outline-none focus:ring-2 focus:ring-white/20 border border-[#444c56]"
+                  required
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="bg-[#1c2128] text-white px-4 py-2.5 rounded-lg outline-none focus:ring-2 focus:ring-white/20 border border-[#444c56]"
+                  required
+                />
+                <button type="submit" className="bg-white text-black px-6 py-2.5 rounded-lg font-medium hover:bg-gray-200 transition-colors mt-2">
+                  Sign In
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setAuthMode('select')}
+                  className="text-[#8b949e] hover:text-white transition-colors text-sm mt-2"
+                >
+                  Back
+                </button>
+              </form>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Profile & Friend Code */}
+            <div className="bg-[#2d333b] p-4 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {profile?.photoURL ? (
+                  <img src={profile.photoURL} alt="Profile" className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-10 h-10 bg-[#444c56] rounded-full flex items-center justify-center">
+                    <Users size={20} />
+                  </div>
+                )}
+                <div>
+                  <p className="text-white font-medium">{profile?.displayName}</p>
+                  <p className="text-xs text-gray-400 flex items-center gap-1">
+                    Code: <span className="font-mono text-white tracking-wider">{profile?.friendCode}</span>
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={copyFriendCode} className="p-2 bg-[#444c56] hover:bg-[#535c68] rounded-lg transition-colors" title="Copy Code">
+                  <Copy size={16} />
+                </button>
+                <button onClick={handleLogout} className="p-2 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors" title="Sign Out">
+                  <LogOut size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Add Friend */}
+            <div className="bg-[#2d333b] p-4 rounded-xl">
+              <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Add Friend</h4>
+              <form onSubmit={sendFriendRequest} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter Friend Code"
+                  value={friendCodeInput}
+                  onChange={(e) => setFriendCodeInput(e.target.value)}
+                  className="flex-1 bg-[#1c2128] text-white px-4 py-2 rounded-lg outline-none focus:ring-2 focus:ring-white/20 font-mono uppercase"
+                  maxLength={8}
+                />
+                <button type="submit" className="bg-white text-black px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors flex items-center gap-2">
+                  <UserPlus size={18} /> Add
+                </button>
+              </form>
+              {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
+              {success && <p className="text-green-400 text-sm mt-2">{success}</p>}
+            </div>
+
+            {/* Friend Requests */}
+            {requests.length > 0 && (
+              <div className="bg-[#2d333b] p-4 rounded-xl">
+                <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Friend Requests</h4>
+                <div className="flex flex-col gap-3">
+                  {requests.map(req => (
+                    <div key={req.id} className="flex items-center justify-between bg-[#1c2128] p-3 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        {req.fromPhoto ? (
+                          <img src={req.fromPhoto} alt="" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="w-8 h-8 bg-[#444c56] rounded-full" />
+                        )}
+                        <span className="text-white font-medium">{req.fromName}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => acceptRequest(req)} className="p-1.5 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-md transition-colors">
+                          <Check size={18} />
+                        </button>
+                        <button onClick={() => declineRequest(req.id)} className="p-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-md transition-colors">
+                          <X size={18} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Friends List */}
+            <div className="bg-[#2d333b] p-4 rounded-xl flex-1">
+              <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Your Friends</h4>
+              {friends.length === 0 ? (
+                <p className="text-gray-500 text-sm text-center py-4">No friends yet. Add someone using their code!</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {friends.map(friend => (
+                    <div key={friend.uid} className="flex items-center gap-3 bg-[#1c2128] p-3 rounded-lg">
+                      <div className="relative">
+                        {friend.photoURL ? (
+                          <img src={friend.photoURL} alt="" className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="w-10 h-10 bg-[#444c56] rounded-full flex items-center justify-center">
+                            <Users size={16} />
+                          </div>
+                        )}
+                        {friend.currentSong && (
+                          <div className="absolute -bottom-1 -right-1 bg-green-500 w-3.5 h-3.5 rounded-full border-2 border-[#1c2128]" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-medium truncate">{friend.displayName}</p>
+                        {friend.currentSong ? (
+                          <p className="text-xs text-green-400 truncate flex items-center gap-1">
+                            <Music size={10} /> {friend.currentSong.title} - {friend.currentSong.artist}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-500">Offline</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

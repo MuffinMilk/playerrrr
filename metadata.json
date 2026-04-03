@@ -1,0 +1,5 @@
+{
+  "name": "awdres Player",
+  "description": "A dark-themed music player with Tidal and Soundcloud integration UI, featuring lyrics and audio playback.",
+  "requestFramePermissions": []
+}

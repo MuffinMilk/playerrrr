@@ -1,0 +1,80 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and current playing status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "friendCode": { "type": "string" },
+        "currentSong": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "artist": { "type": "string" },
+            "coverUrl": { "type": "string" }
+          }
+        }
+      },
+      "required": ["uid", "friendCode"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "A request to become friends",
+      "type": "object",
+      "properties": {
+        "fromUid": { "type": "string" },
+        "fromName": { "type": "string" },
+        "fromPhoto": { "type": "string" },
+        "toUid": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["fromUid", "toUid", "status", "createdAt"]
+    },
+    "Friendship": {
+      "title": "Friendship",
+      "description": "A friendship between two users",
+      "type": "object",
+      "properties": {
+        "user1": { "type": "string" },
+        "user2": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["user1", "user2", "createdAt"]
+    },
+    "Playlist": {
+      "title": "Playlist",
+      "description": "A user's playlist",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "songs": { "type": "array" },
+        "isFavorites": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "name", "songs", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "/friendRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/FriendRequest" },
+      "description": "Pending friend requests"
+    },
+    "/friendships/{friendshipId}": {
+      "schema": { "$ref": "#/entities/Friendship" },
+      "description": "Established friendships"
+    },
+    "/playlists/{playlistId}": {
+      "schema": { "$ref": "#/entities/Playlist" },
+      "description": "User playlists"
+    }
+  }
+}
