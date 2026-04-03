@@ -9,6 +9,7 @@
         "displayName": { "type": "string" },
         "photoURL": { "type": "string" },
         "friendCode": { "type": "string" },
+        "typingTo": { "type": "string" },
         "currentSong": {
           "type": "object",
           "properties": {

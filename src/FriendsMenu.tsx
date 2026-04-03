@@ -27,6 +27,7 @@ interface UserProfile {
   displayName: string;
   photoURL: string;
   friendCode: string;
+  typingTo?: string;
   currentSong?: {
     title: string;
     artist: string;
@@ -57,6 +58,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Auth states
   const [authMode, setAuthMode] = useState<'select' | 'login' | 'signup'>('select');
@@ -189,6 +191,12 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
       unsub2();
     };
   }, [user, activeChat]);
+
+  useEffect(() => {
+    if (!activeChat && user) {
+      setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
+    }
+  }, [activeChat, user]);
 
   const handleLogin = async () => {
     try {
@@ -323,6 +331,21 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewMessage(e.target.value);
+    if (!user || !activeChat) return;
+
+    setDoc(doc(db, 'users', user.uid), { typingTo: activeChat.uid }, { merge: true }).catch(console.error);
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
+    }, 2000);
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !user || !activeChat) return;
@@ -335,6 +358,8 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
         createdAt: Date.now()
       });
       setNewMessage('');
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      setDoc(doc(db, 'users', user.uid), { typingTo: '' }, { merge: true }).catch(console.error);
     } catch (err) {
       console.error('Failed to send message', err);
     }
@@ -573,6 +598,13 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                         );
                       })
                     )}
+                    {activeChat.typingTo === user.uid && (
+                      <div className="flex justify-start">
+                        <div className="bg-[#1c2128] text-gray-400 rounded-2xl px-4 py-2 rounded-tl-sm text-sm italic">
+                          typing...
+                        </div>
+                      </div>
+                    )}
                     <div ref={messagesEndRef} />
                   </div>
 
@@ -580,7 +612,7 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                     <input
                       type="text"
                       value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
+                      onChange={handleTyping}
                       placeholder="Message..."
                       className="flex-1 bg-[#1c2128] text-white px-4 py-2 rounded-full outline-none focus:ring-2 focus:ring-white/20 text-sm"
                     />
@@ -621,7 +653,9 @@ export default function FriendsMenu({ onClose }: { onClose: () => void }) {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-white font-medium truncate">{friend.displayName}</p>
-                              {friend.currentSong ? (
+                              {friend.typingTo === user.uid ? (
+                                <p className="text-xs text-blue-400 italic truncate">Typing...</p>
+                              ) : friend.currentSong ? (
                                 <p className="text-xs text-green-400 truncate flex items-center gap-1">
                                   <Music size={10} /> {friend.currentSong.title} - {friend.currentSong.artist}
                                 </p>

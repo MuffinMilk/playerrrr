@@ -14,9 +14,10 @@ service cloud.firestore {
     }
     function isValidUser() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'friendCode', 'currentSong']) &&
+      return hasOnlyAllowedFields(['uid', 'displayName', 'photoURL', 'friendCode', 'currentSong', 'typingTo']) &&
              data.uid == request.auth.uid &&
-             data.friendCode is string && data.friendCode.size() > 0 && data.friendCode.size() <= 20;
+             data.friendCode is string && data.friendCode.size() > 0 && data.friendCode.size() <= 20 &&
+             (!('typingTo' in data) || data.typingTo is string);
     }
     function isValidFriendRequest() {
       let data = request.resource.data;
