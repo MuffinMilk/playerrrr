@@ -225,10 +225,16 @@ export default function App() {
 
   useEffect(() => {
     if (currentSong && audioRef.current) {
+      const ensureProxied = (url: string, type: 'audio' | 'image') => {
+        if (!url || url.startsWith('/') || url.startsWith('blob:') || url.startsWith('data:')) return url;
+        if (url.includes('/api/proxy-')) return url;
+        return `/api/proxy-${type}?url=${encodeURIComponent(url)}`;
+      };
+
       if (currentSong.duration) {
         setDuration(currentSong.duration);
       }
-      audioRef.current.src = currentSong.audioUrl;
+      audioRef.current.src = ensureProxied(currentSong.audioUrl, 'audio');
       const playPromise = audioRef.current.play();
       if (playPromise !== undefined) {
         playPromise.then(() => setIsPlaying(true)).catch(error => {
@@ -247,7 +253,7 @@ export default function App() {
           currentSong: {
             title: currentSong.title,
             artist: currentSong.artist,
-            coverUrl: currentSong.coverUrl
+            coverUrl: ensureProxied(currentSong.coverUrl, 'image')
           }
         }, { merge: true }).catch(console.error);
       }
@@ -408,7 +414,7 @@ export default function App() {
       
       // Primary: JioSaavn unofficial API for full tracks
       try {
-        const res = await fetch(`https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(searchQuery)}`);
+        const res = await fetch(`/api/search?query=${encodeURIComponent(searchQuery)}`);
         if (res.ok) {
           const data = await res.json();
           if (data?.data?.results?.length > 0) {
@@ -427,8 +433,8 @@ export default function App() {
                 id: item.id,
                 title: decodeHTML(item.name || ''),
                 artist: decodeHTML(item.primaryArtists || ''),
-                coverUrl: highResImage,
-                audioUrl: highResAudio,
+                coverUrl: `/api/proxy-image?url=${encodeURIComponent(highResImage)}`,
+                audioUrl: `/api/proxy-audio?url=${encodeURIComponent(highResAudio)}`,
                 duration: parseInt(item.duration || '0', 10)
               };
             }).filter((song: Song) => song.audioUrl);
@@ -470,7 +476,7 @@ export default function App() {
     setPlainLyrics(null);
     try {
       const cleanTitle = title.split('(')[0].split('feat.')[0].trim();
-      const res = await fetch(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(cleanTitle)}`);
+      const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(cleanTitle)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.syncedLyrics) {
