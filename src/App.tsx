@@ -17,7 +17,6 @@ import {
   Lock,
   Users
 } from 'lucide-react';
-import { GoogleGenAI, Modality } from "@google/genai";
 import FriendsMenu from './FriendsMenu';
 import { auth, db } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -31,7 +30,6 @@ interface Song {
   coverUrl: string;
   audioUrl: string;
   duration?: number;
-  isPreview?: boolean;
 }
 
 interface Playlist {
@@ -54,11 +52,7 @@ export default function App() {
   const [syncedLyrics, setSyncedLyrics] = useState<{time: number, text: string}[] | null>(null);
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
   const [isLoadingLyrics, setIsLoadingLyrics] = useState(false);
-  const [rightPanelView, setRightPanelView] = useState<'search' | 'playlist' | 'queue' | 'lyrics' | 'generate'>('search');
-  const [isGeneratingMusic, setIsGeneratingMusic] = useState(false);
-  const [generationPrompt, setGenerationPrompt] = useState('');
-  const [generationProgress, setGenerationProgress] = useState('');
-  const [hasApiKey, setHasApiKey] = useState(false);
+  const [rightPanelView, setRightPanelView] = useState<'search' | 'playlist' | 'queue' | 'lyrics'>('search');
 
   const activeLyricIndex = useMemo(() => {
     if (!syncedLyrics) return -1;
@@ -97,96 +91,6 @@ export default function App() {
   const queueIndexRef = useRef<number>(-1);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    const checkApiKey = async () => {
-      if ((window as any).aistudio?.hasSelectedApiKey) {
-        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-        setHasApiKey(hasKey);
-      }
-    };
-    checkApiKey();
-  }, []);
-
-  const handleSelectApiKey = async () => {
-    if ((window as any).aistudio?.openSelectKey) {
-      await (window as any).aistudio.openSelectKey();
-      setHasApiKey(true);
-    }
-  };
-
-  const handleGenerateMusic = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!generationPrompt.trim()) return;
-    if (!hasApiKey) {
-      handleSelectApiKey();
-      return;
-    }
-
-    setIsGeneratingMusic(true);
-    setGenerationProgress('Initializing generation...');
-    
-    try {
-      const ai = new GoogleGenAI({ apiKey: (process.env as any).API_KEY });
-      const response = await ai.models.generateContentStream({
-        model: "lyria-3-pro-preview",
-        contents: generationPrompt,
-        config: {
-          responseModalities: [Modality.AUDIO],
-        }
-      });
-
-      let audioBase64 = "";
-      let mimeType = "audio/wav";
-
-      setGenerationProgress('Generating full track (this may take a minute)...');
-      
-      for await (const chunk of response) {
-        const parts = (chunk as any).candidates?.[0]?.content?.parts;
-        if (!parts) continue;
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            if (!audioBase64 && part.inlineData.mimeType) {
-              mimeType = part.inlineData.mimeType;
-            }
-            audioBase64 += part.inlineData.data;
-          }
-        }
-      }
-
-      if (!audioBase64) throw new Error("No audio data received");
-
-      setGenerationProgress('Processing audio...');
-      const binary = atob(audioBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      const blob = new Blob([bytes], { type: mimeType });
-      const audioUrl = URL.createObjectURL(blob);
-
-      const newSong: Song = {
-        id: `ai-${Date.now()}`,
-        title: generationPrompt.length > 30 ? generationPrompt.substring(0, 30) + '...' : generationPrompt,
-        artist: 'AI Generated',
-        coverUrl: `https://picsum.photos/seed/${encodeURIComponent(generationPrompt)}/500/500`,
-        audioUrl: audioUrl,
-        duration: 0 // Will be updated when loaded
-      };
-
-      setResults([newSong, ...results]);
-      setRightPanelView('search');
-      setGenerationPrompt('');
-      playSongFromList(newSong, [newSong, ...results]);
-      
-    } catch (error) {
-      console.error("Music generation failed", error);
-      alert("Failed to generate music. Please try again.");
-    } finally {
-      setIsGeneratingMusic(false);
-      setGenerationProgress('');
-    }
-  };
 
   const playSongFromList = (song: Song, list: Song[]) => {
     setQueue(list);
@@ -502,62 +406,36 @@ export default function App() {
     try {
       let formattedResults: Song[] = [];
       
-      // Try multiple JioSaavn unofficial APIs for full tracks
-      const saavnApis = [
-        `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(searchQuery)}`,
-        `https://saavn.dev/api/search/songs?query=${encodeURIComponent(searchQuery)}`
-      ];
-
-      for (const api of saavnApis) {
-        try {
-          const res = await fetch(api);
-          if (res.ok) {
-            const data = await res.json();
-            const results = data?.data?.results || data?.data || [];
-            if (results.length > 0) {
-              formattedResults = results.map((item: any) => {
-                // Decode HTML entities in title/artist
-                const decodeHTML = (html: string) => {
-                  const txt = document.createElement('textarea');
-                  txt.innerHTML = html;
-                  return txt.value;
-                };
-                
-                const highResImage = item.image?.find((img: any) => img.quality === '500x500')?.link || item.image?.[item.image.length - 1]?.link || item.image?.[0]?.link || '';
-                const highResAudio = item.downloadUrl?.find((url: any) => url.quality === '320kbps')?.link || item.downloadUrl?.[item.downloadUrl.length - 1]?.link || '';
-                
-                return {
-                  id: item.id,
-                  title: decodeHTML(item.name || ''),
-                  artist: decodeHTML(item.primaryArtists || ''),
-                  coverUrl: highResImage,
-                  audioUrl: highResAudio,
-                  duration: parseInt(item.duration || '0', 10)
-                };
-              }).filter((song: Song) => song.audioUrl);
+      // Primary: JioSaavn unofficial API for full tracks
+      try {
+        const res = await fetch(`https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(searchQuery)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.data?.results?.length > 0) {
+            formattedResults = data.data.results.map((item: any) => {
+              // Decode HTML entities in title/artist
+              const decodeHTML = (html: string) => {
+                const txt = document.createElement('textarea');
+                txt.innerHTML = html;
+                return txt.value;
+              };
               
-              if (formattedResults.length > 0) break;
-            }
+              const highResImage = item.image?.find((img: any) => img.quality === '500x500')?.link || item.image?.[0]?.link || '';
+              const highResAudio = item.downloadUrl?.find((url: any) => url.quality === '320kbps')?.link || item.downloadUrl?.[item.downloadUrl.length - 1]?.link || '';
+              
+              return {
+                id: item.id,
+                title: decodeHTML(item.name || ''),
+                artist: decodeHTML(item.primaryArtists || ''),
+                coverUrl: highResImage,
+                audioUrl: highResAudio,
+                duration: parseInt(item.duration || '0', 10)
+              };
+            }).filter((song: Song) => song.audioUrl);
           }
-        } catch (err) {
-          console.error(`Saavn API ${api} failed`, err);
         }
-      }
-
-      // Fallback: iTunes API for 30s previews (only if Saavn failed)
-      if (formattedResults.length === 0) {
-        const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(searchQuery)}&entity=song&limit=20`);
-        const data = await res.json();
-        
-        formattedResults = data.results.map((item: any) => ({
-          id: item.trackId.toString(),
-          title: item.trackName,
-          artist: item.artistName,
-          coverUrl: item.artworkUrl100.replace('100x100', '600x600'), // Get higher res image
-          audioUrl: item.previewUrl,
-          duration: Math.floor((item.trackTimeMillis || 30000) / 1000),
-          isPreview: true
-        }));
+      } catch (saavnError) {
+        console.error("Saavn API failed", saavnError);
       }
       
       setResults(formattedResults);
@@ -794,9 +672,6 @@ export default function App() {
                     <button onClick={() => setShowFriendsMenu(true)} className="hover:text-white transition-colors outline-none" title="Friends">
                       <Users size={20} />
                     </button>
-                    <button onClick={() => setRightPanelView('generate')} className={`hover:text-white transition-colors outline-none ${(rightPanelView as string) === 'generate' ? 'text-purple-400' : ''}`} title="Generate AI Music">
-                      <Music size={20} />
-                    </button>
                     <button onClick={() => { setRightPanelView('playlist'); setActivePlaylist(null); }} className="hover:text-white transition-colors outline-none" title="Playlist">
                       <ListMusic size={20} />
                     </button>
@@ -828,14 +703,7 @@ export default function App() {
                           <h4 className={`font-medium truncate ${currentSong?.id === song.id ? 'text-white' : 'text-gray-200'}`}>
                             {song.title}
                           </h4>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm text-[#8b949e] truncate">{song.artist}</p>
-                            {song.isPreview && (
-                              <span className="text-[10px] bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
-                                30s Preview
-                              </span>
-                            )}
-                          </div>
+                          <p className="text-sm text-[#8b949e] truncate">{song.artist}</p>
                         </div>
                         
                         <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
@@ -885,22 +753,10 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                ) : searchQuery ? (
-                  <div className="flex flex-col items-center justify-center h-full text-[#8b949e] p-8 text-center">
-                    <Search size={64} className="mb-6 opacity-20" />
-                    <p className="text-lg mb-2">No full tracks found for "{searchQuery}"</p>
-                    <p className="text-sm mb-8 max-w-[250px]">Some results were filtered because they were only 30s previews.</p>
-                    <button 
-                      onClick={() => setRightPanelView('generate')}
-                      className="bg-purple-600/20 text-purple-400 border border-purple-500/30 px-8 py-3 rounded-xl hover:bg-purple-600/30 transition-all hover:scale-105 active:scale-95 font-bold"
-                    >
-                      Generate a Full Song with AI
-                    </button>
-                  </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-[#8b949e]">
                     <Search size={64} className="mb-6 opacity-50" />
-                    <p className="text-lg">Try searching "lofi hip hop"</p>
+                    <p className="text-lg">Try searching "metal"</p>
                   </div>
                 )}
               </div>
@@ -964,14 +820,7 @@ export default function App() {
                                 <h4 className={`font-medium truncate ${currentSong?.id === song.id ? 'text-white' : 'text-gray-200'}`}>
                                   {song.title}
                                 </h4>
-                                <div className="flex items-center gap-2">
-                                  <p className="text-sm text-[#8b949e] truncate">{song.artist}</p>
-                                  {song.isPreview && (
-                                    <span className="text-[10px] bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
-                                      30s Preview
-                                    </span>
-                                  )}
-                                </div>
+                                <p className="text-sm text-[#8b949e] truncate">{song.artist}</p>
                               </div>
                             </button>
                             <button 
@@ -1062,114 +911,6 @@ export default function App() {
                 <p>No songs are playing.</p>
               </div>
             </>
-          )}
-
-          {rightPanelView === 'generate' && (
-            <div className="flex flex-col h-full">
-              <div className="p-4 border-b border-[#30363d] flex items-center justify-between">
-                <h3 className="font-bold text-white flex items-center gap-2">
-                  <Music className="w-5 h-5 text-purple-500" />
-                  AI Music Generator
-                </h3>
-                <button onClick={() => setRightPanelView('search')} className="text-[#8b949e] hover:text-white">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              
-              <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
-                <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4 mb-6">
-                  <p className="text-sm text-purple-200 leading-relaxed">
-                    Create full-length, high-quality tracks using AI. Describe the mood, genre, and instruments you want.
-                  </p>
-                </div>
-
-                {!hasApiKey ? (
-                  <div className="text-center py-8">
-                    <Lock className="w-12 h-12 text-[#8b949e] mx-auto mb-4" />
-                    <h4 className="text-white font-medium mb-2">API Key Required</h4>
-                    <p className="text-sm text-[#8b949e] mb-6">
-                      To generate full songs, you need to select a paid Gemini API key.
-                    </p>
-                    <button 
-                      onClick={handleSelectApiKey}
-                      className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-full font-medium transition-colors"
-                    >
-                      Select API Key
-                    </button>
-                    <p className="text-xs text-[#8b949e] mt-4">
-                      <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline">
-                        Learn about billing
-                      </a>
-                    </p>
-                  </div>
-                ) : (
-                  <form onSubmit={handleGenerateMusic} className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">
-                        What kind of song should I create?
-                      </label>
-                      <textarea
-                        value={generationPrompt}
-                        onChange={(e) => setGenerationPrompt(e.target.value)}
-                        placeholder="e.g., A cinematic orchestral track with deep cellos and soaring violins, epic and emotional..."
-                        className="w-full bg-[#0d1117] border border-[#30363d] rounded-xl p-4 text-white placeholder-gray-500 focus:border-purple-500 outline-none min-h-[120px] resize-none"
-                        disabled={isGeneratingMusic}
-                      />
-                    </div>
-                    
-                    <button
-                      type="submit"
-                      disabled={isGeneratingMusic || !generationPrompt.trim()}
-                      className={`w-full py-4 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2
-                        ${isGeneratingMusic || !generationPrompt.trim() 
-                          ? 'bg-gray-700 cursor-not-allowed' 
-                          : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 shadow-lg shadow-purple-500/20'}`}
-                    >
-                      {isGeneratingMusic ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Generating...
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-5 h-5 fill-current" />
-                          Generate Full Song
-                        </>
-                      )}
-                    </button>
-
-                    {isGeneratingMusic && (
-                      <div className="mt-4 text-center">
-                        <p className="text-sm text-purple-400 animate-pulse">
-                          {generationProgress}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-2">
-                          Full songs can take up to 60 seconds to generate.
-                        </p>
-                      </div>
-                    )}
-                  </form>
-                )}
-
-                <div className="mt-12">
-                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Tips for best results</h4>
-                  <ul className="space-y-3">
-                    <li className="flex gap-3 text-sm text-gray-400">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5 shrink-0" />
-                      Be specific about instruments (e.g., "acoustic guitar", "synthesizers").
-                    </li>
-                    <li className="flex gap-3 text-sm text-gray-400">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5 shrink-0" />
-                      Mention the mood or vibe (e.g., "melancholic", "energetic", "lo-fi").
-                    </li>
-                    <li className="flex gap-3 text-sm text-gray-400">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5 shrink-0" />
-                      Specify the genre (e.g., "Jazz", "Synthwave", "Classical").
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
           )}
 
           {rightPanelView === 'lyrics' && (
