@@ -44,6 +44,7 @@ interface Playlist {
 export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [results, setResults] = useState<Song[]>([]);
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -409,6 +410,7 @@ export default function App() {
     if (!searchQuery.trim()) return;
 
     setIsSearching(true);
+    setSearchError(null);
     try {
       let formattedResults: Song[] = [];
       
@@ -438,15 +440,21 @@ export default function App() {
                 duration: parseInt(item.duration || '0', 10)
               };
             }).filter((song: Song) => song.audioUrl);
+          } else {
+            setSearchError("No results found.");
           }
+        } else {
+          setSearchError(`Server returned ${res.status} ${res.statusText}`);
         }
-      } catch (saavnError) {
+      } catch (saavnError: any) {
         console.error("Saavn API failed", saavnError);
+        setSearchError(`Failed to fetch: ${saavnError.message}`);
       }
       
       setResults(formattedResults);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Search failed", error);
+      setSearchError(`Search failed: ${error.message}`);
     } finally {
       setIsSearching(false);
     }
@@ -694,6 +702,11 @@ export default function App() {
                   <div className="flex flex-col items-center justify-center h-full text-[#8b949e]">
                     <Loader2 className="animate-spin mb-4" size={48} />
                     <p>Searching sources...</p>
+                  </div>
+                ) : searchError ? (
+                  <div className="flex flex-col items-center justify-center h-full text-red-400 p-4 text-center">
+                    <p className="mb-2 font-medium">Search failed</p>
+                    <p className="text-sm opacity-80">{searchError}</p>
                   </div>
                 ) : results.length > 0 ? (
                   <div className="flex flex-col gap-1">
