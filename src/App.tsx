@@ -433,8 +433,8 @@ export default function App() {
                 id: item.id,
                 title: decodeHTML(item.name || ''),
                 artist: decodeHTML(item.primaryArtists || ''),
-                coverUrl: `/api/proxy-image?url=${encodeURIComponent(highResImage)}`,
-                audioUrl: `/api/proxy-audio?url=${encodeURIComponent(highResAudio)}`,
+                coverUrl: highResImage ? `/api/proxy-image?url=${encodeURIComponent(highResImage)}` : '',
+                audioUrl: highResAudio ? `/api/proxy-audio?url=${encodeURIComponent(highResAudio)}` : '',
                 duration: parseInt(item.duration || '0', 10)
               };
             }).filter((song: Song) => song.audioUrl);
