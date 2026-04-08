@@ -416,7 +416,7 @@ export default function App() {
       
       // Primary: JioSaavn unofficial API for full tracks
       try {
-        const res = await fetch(`/api/search?query=${encodeURIComponent(searchQuery)}`);
+        const res = await fetch(`https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(searchQuery)}`);
         if (res.ok) {
           const data = await res.json();
           if (data?.data?.results?.length > 0) {
@@ -435,8 +435,8 @@ export default function App() {
                 id: item.id,
                 title: decodeHTML(item.name || ''),
                 artist: decodeHTML(item.primaryArtists || ''),
-                coverUrl: highResImage ? `/api/proxy-image?url=${encodeURIComponent(highResImage)}` : '',
-                audioUrl: highResAudio ? `/api/proxy-audio?url=${encodeURIComponent(highResAudio)}` : '',
+                coverUrl: highResImage || '',
+                audioUrl: highResAudio || '',
                 duration: parseInt(item.duration || '0', 10)
               };
             }).filter((song: Song) => song.audioUrl);
@@ -484,7 +484,7 @@ export default function App() {
     setPlainLyrics(null);
     try {
       const cleanTitle = title.split('(')[0].split('feat.')[0].trim();
-      const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(cleanTitle)}`);
+      const res = await fetch(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(cleanTitle)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.syncedLyrics) {
