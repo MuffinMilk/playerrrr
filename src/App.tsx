@@ -418,15 +418,24 @@ export default function App() {
       try {
         let res;
         const targetUrl = `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(searchQuery)}`;
-        try {
-          res = await fetch(targetUrl);
-        } catch (networkError) {
-          console.log("Primary API blocked, trying fallback proxy...");
-          const fallbackUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-          res = await fetch(fallbackUrl);
+        const proxies = [
+          targetUrl, // Try direct first
+          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+        ];
+
+        let lastError;
+        for (const url of proxies) {
+          try {
+            res = await fetch(url);
+            if (res.ok) break;
+          } catch (e) {
+            lastError = e;
+            console.log(`Failed to fetch from ${url}, trying next...`);
+          }
         }
         
-        if (res.ok) {
+        if (res && res.ok) {
           const data = await res.json();
           if (data?.data?.results?.length > 0) {
             formattedResults = data.data.results.map((item: any) => {
@@ -452,8 +461,10 @@ export default function App() {
           } else {
             setSearchError("No results found.");
           }
-        } else {
+        } else if (res) {
           setSearchError(`Server returned ${res.status} ${res.statusText}`);
+        } else {
+          setSearchError("All API proxies failed. Your network might be blocking them.");
         }
       } catch (saavnError: any) {
         console.error("Saavn API failed", saavnError);
@@ -495,14 +506,22 @@ export default function App() {
       const cleanTitle = title.split('(')[0].split('feat.')[0].trim();
       let res;
       const targetUrl = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(cleanTitle)}`;
-      try {
-        res = await fetch(targetUrl);
-      } catch (networkError) {
-        console.log("Lyrics API blocked, trying fallback proxy...");
-        res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
+      const proxies = [
+        targetUrl,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+      ];
+
+      for (const url of proxies) {
+        try {
+          res = await fetch(url);
+          if (res.ok) break;
+        } catch (e) {
+          console.log(`Lyrics fetch failed from ${url}, trying next...`);
+        }
       }
       
-      if (res.ok) {
+      if (res && res.ok) {
         const data = await res.json();
         if (data.syncedLyrics) {
           setSyncedLyrics(parseLrc(data.syncedLyrics));
