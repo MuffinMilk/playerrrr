@@ -277,6 +277,32 @@ export default function App() {
 
       tryPlay(ensureProxied(currentSong.audioUrl, 'audio'));
       
+      // Update document title for Discord RPC / Browser tabs
+      document.title = `${currentSong.title} - ${currentSong.artist} | Music App`;
+
+      // Update Media Session API for OS-level media controls and Discord RPC tools
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: currentSong.title,
+          artist: currentSong.artist,
+          album: 'Music App',
+          artwork: [
+            { src: ensureProxied(currentSong.coverUrl, 'image'), sizes: '500x500', type: 'image/jpeg' }
+          ]
+        });
+
+        navigator.mediaSession.setActionHandler('play', () => {
+          audioRef.current?.play();
+          setIsPlaying(true);
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          audioRef.current?.pause();
+          setIsPlaying(false);
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', playPrev);
+        navigator.mediaSession.setActionHandler('nexttrack', playNext);
+      }
+      
       fetchLyrics(currentSong.artist, currentSong.title);
 
       if (currentUserUid) {
