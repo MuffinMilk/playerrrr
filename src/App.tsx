@@ -416,7 +416,16 @@ export default function App() {
       
       // Primary: JioSaavn unofficial API for full tracks
       try {
-        const res = await fetch(`https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(searchQuery)}`);
+        let res;
+        const targetUrl = `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(searchQuery)}`;
+        try {
+          res = await fetch(targetUrl);
+        } catch (networkError) {
+          console.log("Primary API blocked, trying fallback proxy...");
+          const fallbackUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+          res = await fetch(fallbackUrl);
+        }
+        
         if (res.ok) {
           const data = await res.json();
           if (data?.data?.results?.length > 0) {
@@ -484,7 +493,15 @@ export default function App() {
     setPlainLyrics(null);
     try {
       const cleanTitle = title.split('(')[0].split('feat.')[0].trim();
-      const res = await fetch(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(cleanTitle)}`);
+      let res;
+      const targetUrl = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(cleanTitle)}`;
+      try {
+        res = await fetch(targetUrl);
+      } catch (networkError) {
+        console.log("Lyrics API blocked, trying fallback proxy...");
+        res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
+      }
+      
       if (res.ok) {
         const data = await res.json();
         if (data.syncedLyrics) {
