@@ -90,8 +90,13 @@ export default function App() {
   const [queueIndex, setQueueIndex] = useState(-1);
   const queueRef = useRef<Song[]>([]);
   const queueIndexRef = useRef<number>(-1);
+  const currentSongRef = useRef<Song | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    currentSongRef.current = currentSong;
+  }, [currentSong]);
 
   const playSongFromList = (song: Song, list: Song[]) => {
     setQueue(list);
@@ -197,9 +202,6 @@ export default function App() {
               nextIndex = 0;
             }
             queueIndexRef.current = nextIndex;
-            setQueueIndex(nextIndex); // This might cause a warning if called inside setState, but it's fine since we're in a functional update. Actually, better to just call it.
-            // Wait, calling state setters inside another state setter's functional update is an anti-pattern.
-            // Let's just use setTimeout to escape the functional update context.
             setTimeout(() => {
               setQueueIndex(nextIndex);
               setCurrentSong(q[nextIndex]);
@@ -213,39 +215,67 @@ export default function App() {
       });
     };
 
+    const onError = (e: Event) => {
+      console.error("Audio element error:", audio.error);
+      const currentSrc = audio.src;
+      if (currentSrc && !currentSrc.includes('codetabs.com') && !currentSrc.startsWith('blob:') && !currentSrc.startsWith('data:')) {
+        console.log("Audio failed to load, trying proxy...");
+        // Extract original URL if it was already proxied by something else, or just proxy the current src
+        const originalUrl = currentSongRef.current?.audioUrl;
+        if (originalUrl) {
+          audio.src = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(originalUrl)}`;
+          audio.play().catch(err => console.error("Proxy playback failed", err));
+        }
+      }
+    };
+
     audio.addEventListener('timeupdate', onTimeUpdate);
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
     audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
 
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
     };
   }, []);
 
   useEffect(() => {
     if (currentSong && audioRef.current) {
       const ensureProxied = (url: string, type: 'audio' | 'image') => {
+        // Since the app is hosted statically on BunnyCDN, local /api/proxy endpoints don't exist.
+        // We must use the direct URL. If it fails, we can try a public proxy.
         if (!url || url.startsWith('/') || url.startsWith('blob:') || url.startsWith('data:')) return url;
-        if (url.includes('/api/proxy-')) return url;
-        return `/api/proxy-${type}?url=${encodeURIComponent(url)}`;
+        return url;
       };
 
       if (currentSong.duration) {
         setDuration(currentSong.duration);
       }
-      audioRef.current.src = ensureProxied(currentSong.audioUrl, 'audio');
-      const playPromise = audioRef.current.play();
-      if (playPromise !== undefined) {
-        playPromise.then(() => setIsPlaying(true)).catch(error => {
-          if (error.name === 'NotAllowedError') {
-            setIsPlaying(false);
-          } else if (error.name !== 'AbortError') {
-            console.error("Playback failed", error);
-          }
-        });
-      }
+      
+      const tryPlay = (url: string) => {
+        if (!audioRef.current) return;
+        audioRef.current.src = url;
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => setIsPlaying(true)).catch(error => {
+            if (error.name === 'NotAllowedError') {
+              setIsPlaying(false);
+            } else if (error.name !== 'AbortError') {
+              console.error("Playback failed", error);
+              // If direct playback fails, try proxying the audio
+              if (!url.includes('codetabs.com')) {
+                console.log("Trying audio proxy...");
+                tryPlay(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`);
+              }
+            }
+          });
+        }
+      };
+
+      tryPlay(ensureProxied(currentSong.audioUrl, 'audio'));
       
       fetchLyrics(currentSong.artist, currentSong.title);
 
