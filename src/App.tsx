@@ -477,13 +477,19 @@ export default function App() {
         const proxies = [
           targetUrl, // Try direct first
           `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
         ];
 
         let lastError;
         for (const url of proxies) {
           try {
-            res = await fetch(url);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 second timeout per proxy
+            
+            res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            
             if (res.ok) break;
           } catch (e) {
             lastError = e;
@@ -565,12 +571,18 @@ export default function App() {
       const proxies = [
         targetUrl,
         `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+        `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
       ];
 
       for (const url of proxies) {
         try {
-          res = await fetch(url);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 second timeout per proxy
+          
+          res = await fetch(url, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          
           if (res.ok) break;
         } catch (e) {
           console.log(`Lyrics fetch failed from ${url}, trying next...`);
