@@ -78,7 +78,6 @@ export default function App() {
   const [showFriendsMenu, setShowFriendsMenu] = useState(false);
   const [currentUserUid, setCurrentUserUid] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState<{ photoURL?: string, displayName?: string, isBanned?: boolean } | null>(null);
-  const [globalAnnouncement, setGlobalAnnouncement] = useState<{ text: string, authorName: string } | null>(null);
   
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [activePlaylist, setActivePlaylist] = useState<Playlist | null>(null);
@@ -135,12 +134,10 @@ export default function App() {
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | null = null;
-    let unsubscribeAnnouncements: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUserUid(user ? user.uid : null);
       if (unsubscribeProfile) unsubscribeProfile();
-      if (unsubscribeAnnouncements) unsubscribeAnnouncements();
       
       if (user) {
         unsubscribeProfile = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
@@ -148,18 +145,6 @@ export default function App() {
             setUserProfile(docSnap.data());
           }
         }, (error) => handleFirestoreError(error, OperationType.GET, `users/${user.uid}`));
-
-        const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(1));
-        unsubscribeAnnouncements = onSnapshot(q, (snapshot) => {
-          if (!snapshot.empty) {
-            const latest = snapshot.docs[0].data();
-            // Only show if it's relatively recent (e.g. last 10 minutes)
-            if (latest.createdAt > Date.now() - 600000) {
-              setGlobalAnnouncement({ text: latest.text, authorName: latest.authorName || 'Admin' });
-              setTimeout(() => setGlobalAnnouncement(null), 10000);
-            }
-          }
-        }, (error) => handleFirestoreError(error, OperationType.LIST, 'announcements'));
       } else {
         setUserProfile(null);
       }
@@ -167,7 +152,6 @@ export default function App() {
     return () => {
       unsubscribeAuth();
       if (unsubscribeProfile) unsubscribeProfile();
-      if (unsubscribeAnnouncements) unsubscribeAnnouncements();
     };
   }, []);
 
@@ -640,19 +624,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0f1115] flex items-center justify-center p-4 font-sans text-gray-200 relative overflow-hidden">
-      {/* Global Announcement Banner */}
-      {globalAnnouncement && (
-        <div className="fixed top-0 left-0 right-0 bg-blue-600 text-white px-4 py-2 text-center text-sm font-medium animate-in slide-in-from-top duration-300 z-[100]">
-          <div className="max-w-4xl mx-auto flex items-center justify-center gap-2">
-            <Music size={16} className="animate-pulse" />
-            <span>
-              <strong className="uppercase tracking-wider mr-2">{globalAnnouncement.authorName}:</strong> 
-              {globalAnnouncement.text}
-            </span>
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-col md:flex-row gap-4 w-full max-w-5xl h-[800px] max-h-[90vh] z-10">
         
         {/* Left Panel - Player */}

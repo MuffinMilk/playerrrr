@@ -1,5 +1,6 @@
 {
   "name": "awdres Player",
-  "description": "A dark-themed music player with Tidal and Soundcloud integration UI, featuring lyrics and audio playback.",
-  "requestFramePermissions": ["microphone", "camera"]
+  "description": "A dark-themed music player with Tidal and Soundcloud integration UI, featuring lyrics, audio playback, friends chat, calling, and profile customization.",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -11,7 +11,7 @@ service cloud.firestore {
     }
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin') ||
           (request.auth.token.email == "awdrej.puente@icloud.com" || request.auth.token.email == "awdrepuente408@gmail.com"));
     }
     function isBanned() {
@@ -66,12 +66,13 @@ service cloud.firestore {
     }
     function isValidMessage() {
       let data = request.resource.data;
-      return hasOnlyAllowedFields(['senderId', 'receiverId', 'conversationId', 'text', 'createdAt']) &&
+      return hasOnlyAllowedFields(['senderId', 'receiverId', 'conversationId', 'text', 'createdAt', 'read']) &&
              data.senderId == request.auth.uid &&
              data.receiverId is string &&
              data.conversationId is string &&
              data.text is string && data.text.size() > 0 && data.text.size() <= 5000 &&
-             data.createdAt is number;
+             data.createdAt is number &&
+             (!('read' in data) || data.read is bool);
     }
     function isValidCall() {
       let data = request.resource.data;
@@ -144,6 +145,7 @@ service cloud.firestore {
         resource.data.conversationId.matches(".*" + request.auth.uid + ".*")
       );
       allow create: if canMessage() && isValidMessage();
+      allow update: if isAuthenticated() && !isBanned() && resource.data.receiverId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) && request.resource.data.read == true;
     }
 
     match /calls/{callId} {
@@ -153,8 +155,9 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
 
       match /candidates/{candidateId} {
-        allow read: if isAuthenticated() && (get(/databases/$(database)/documents/calls/$(callId)).data.callerId == request.auth.uid || get(/databases/$(database)/documents/calls/$(callId)).data.receiverId == request.auth.uid);
+        allow read: if isAuthenticated();
         allow create: if isAuthenticated() && isValidCandidate();
+        allow delete: if isAuthenticated();
       }
     }
 
